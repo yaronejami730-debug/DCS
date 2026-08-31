@@ -1,0 +1,38 @@
+# Signature/stamp cutout engine — fchaussin/signature-remove-bg (MIT).
+# No ML, no GPU, ~30 MB RAM at rest. It is the ONLY external image service
+# Scan&Sign depends on, and it sits behind the ImageExtractionProvider
+# interface so it can be swapped without touching the rest of the codebase.
+#
+#   pnpm extractor:up      start
+#   pnpm extractor:logs    follow
+#   pnpm extractor:down    stop
+#
+# Sanity check:  curl http://localhost:8000/health   ->  {"status":"ok"}
+
+services:
+  signature-remove-bg:
+    image: fchaussin/signature-remove-bg:latest
+    container_name: scansign-extractor
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+      PUBLIC_PORT: "8000"
+      MAX_UPLOAD_MB: "50"
+      DEFAULT_MODE: auto
+      RENDER_MODE: auto
+      MAX_CONCURRENT_OPS: "4"
+      # The backend is the only caller; it is not a browser, so no origin is needed.
+      CORS_ORIGINS: "*"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M

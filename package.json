@@ -1,0 +1,32 @@
+{
+  "name": "scansign",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Scan&Sign — distribute PDFs to iPhones, capture signature/stamp from a photo, re-inject them into the PDF.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @scansign/api build && pnpm --filter @scansign/admin build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "dev": "pnpm --parallel --filter @scansign/api --filter @scansign/admin dev",
+    "dev:api": "pnpm --filter @scansign/api dev",
+    "dev:admin": "pnpm --filter @scansign/admin dev",
+    "dev:mobile": "pnpm --filter @scansign/mobile start",
+    "extractor:up": "docker compose -f services/signature-remove-bg/docker-compose.yml up -d",
+    "extractor:down": "docker compose -f services/signature-remove-bg/docker-compose.yml down",
+    "extractor:logs": "docker compose -f services/signature-remove-bg/docker-compose.yml logs -f",
+    "db:push": "supabase db push",
+    "db:reset": "supabase db reset",
+    "smoke": "node tools/smoke.mjs",
+    "fixtures": "node tools/make-fixtures.mjs",
+    "account": "node apps/api/scripts/account.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,42 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+
+# Environment — never commit real secrets
+.env
+.env.*
+!.env.example
+
+# Expo
+.expo/
+.expo-shared/
+apps/mobile/ios/
+apps/mobile/android/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Supabase local stack
+supabase/.branches/
+supabase/.temp/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+
+# Test scratch output
+tmp/
+*.local
+
+# Extraction engine checked out for local (non-Docker) runs
+services/signature-remove-bg/upstream/
+
+# Generated test fixtures and signed output
+tools/fixtures/
