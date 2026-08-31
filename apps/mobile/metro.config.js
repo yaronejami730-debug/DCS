@@ -1,5 +1,6 @@
 // Metro must be told about the monorepo: sources live in packages/*, and
-// dependencies are hoisted to the repo root (see .npmrc node-linker=hoisted).
+// dependencies are hoisted to the repo root (see nodeLinker: hoisted in
+// pnpm-workspace.yaml).
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('node:path');
 
@@ -14,7 +15,11 @@ config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
 ];
-config.resolver.disableHierarchicalLookup = true;
+// Hierarchical lookup is deliberately left ON. With nodeLinker: hoisted every
+// dependency sits in the workspace root, which normal Node resolution finds on
+// its own; disabling it made Metro rely solely on its own cached module map,
+// so any install that replaced node_modules under a running server produced
+// "could not be found within the project" for a package that was plainly there.
 
 /**
  * `packages/*` are consumed as TypeScript source and are also compiled by tsc

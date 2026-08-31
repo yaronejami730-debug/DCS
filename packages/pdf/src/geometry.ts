@@ -135,6 +135,32 @@ export const containFit = (
   };
 };
 
+/**
+ * Map a single point from viewport space (origin top-left, page rotation
+ * applied — what the operator sees) to PDF user space (origin bottom-left).
+ *
+ * `normalizedToPdfRect` handles boxes; this handles the anchors that boxes
+ * cannot express, such as where a text label should start.
+ */
+export const viewportPointToPdfPoint = (
+  x: number,
+  y: number,
+  pageWidth: number,
+  pageHeight: number,
+  rotation: PageRotation = 0,
+): { x: number; y: number } => {
+  switch (rotation) {
+    case 0:
+      return { x, y: pageHeight - y };
+    case 90:
+      return { x: y, y: x };
+    case 180:
+      return { x: pageWidth - x, y };
+    case 270:
+      return { x: pageWidth - y, y: pageHeight - x };
+  }
+};
+
 /** What pdf-lib needs to stamp an image: a box plus a counter-clockwise angle. */
 export interface ImagePlacement extends PdfRect {
   /** Counter-clockwise degrees, as expected by pdf-lib's `degrees()`. */

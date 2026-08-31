@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { WebView } from 'react-native-webview';
+import { ZONE_TYPE_LABEL } from '@scansign/shared';
 import { useDocument, useDocumentPreview } from '../../../src/lib/queries';
 import { Button, DocumentPill, Loading, Screen } from '../../../src/components/ui';
 import { theme } from '../../../src/lib/theme';
@@ -28,6 +29,35 @@ export default function DocumentScreen() {
         </Text>
         <DocumentPill status={doc.status} />
       </View>
+
+      {preview?.signed && (
+        <View style={styles.signedBanner}>
+          <Text style={styles.signedText}>Document signé — signature et tampon appliqués</Text>
+        </View>
+      )}
+
+      {preview?.annotated && (
+        <View style={styles.legend}>
+          {(
+            [
+              ['signature', theme.color.brand],
+              ['stamp', theme.color.success],
+              ['mention', theme.color.warning],
+            ] as const
+          )
+            .filter(([mark]) => (preview.zones[mark] ?? 0) > 0)
+            .map(([mark, colour]) => (
+              <View key={mark} style={styles.legendItem}>
+                <View style={[styles.legendSwatch, { borderColor: colour }]} />
+                <Text style={styles.legendText}>
+                  {ZONE_TYPE_LABEL[mark]}
+                  {preview.zones[mark] > 1 ? ` ×${preview.zones[mark]}` : ''}
+                </Text>
+              </View>
+            ))}
+          <Text style={styles.legendHint}>Emplacements prévus</Text>
+        </View>
+      )}
 
       <View style={styles.viewer}>
         {preview ? (
@@ -64,6 +94,32 @@ const styles = StyleSheet.create({
   back: { color: theme.color.brand, fontSize: 16, fontWeight: '600' },
   title: { fontSize: 18, fontWeight: '700', color: theme.color.text },
   viewer: { flex: 1, marginHorizontal: 16, borderRadius: theme.radius.md, overflow: 'hidden' },
+  legend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendSwatch: {
+    width: 14,
+    height: 11,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderRadius: 2,
+  },
+  legendText: { fontSize: 12.5, color: theme.color.text, fontWeight: '600' },
+  legendHint: { marginLeft: 'auto', fontSize: 11.5, color: theme.color.muted },
+  signedBanner: {
+    marginHorizontal: 20,
+    marginBottom: 10,
+    backgroundColor: theme.color.successSoft,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  signedText: { color: theme.color.success, fontSize: 13, fontWeight: '600' },
   footer: {
     padding: 20,
     paddingBottom: 32,

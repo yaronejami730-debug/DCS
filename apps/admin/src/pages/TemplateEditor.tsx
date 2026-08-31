@@ -1,8 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import type { Document, SaveTemplateInput, ZoneType } from '@scansign/shared';
+import {
+  ZONE_TYPE,
+  ZONE_TYPE_LABEL,
+  type Document,
+  type SaveTemplateInput,
+  type ZoneType,
+} from '@scansign/shared';
 import { api, ApiRequestError } from '../lib/api';
-import { fetchOriginalUrl, useAssignTemplate, useSaveTemplate, useTemplate } from '../lib/queries';
+import {
+  downloadTemplatePdf,
+  fetchOriginalUrl,
+  fetchTemplateSource,
+  useAssignTemplate,
+  useSaveTemplate,
+  useTemplate,
+} from '../lib/queries';
 import { Page } from '../components/Layout';
 import { PdfViewer } from '../components/PdfViewer';
 import { ZoneEditor, type EditorZone } from '../components/ZoneEditor';
@@ -33,39 +46,64 @@ export const TemplateEditorPage = () => {
   const [name, setName] = useState('');
   const [filenamePattern, setFilenamePattern] = useState('');
   const [zones, setZones] = useState<EditorZone[]>([]);
-  const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(1);
-  const [rendered, setRendered] = useState<{ width: number; height: number } | null>(null);
   const [drawing, setDrawing] = useState<ZoneType | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingPdf, setLoadingPdf] = useState(true);
+  const [downloading, setDownloading] = useState(false);
+  // Configuring zones for one document should not automatically add an entry to
+  // the template library. Reusable is opt-in, and it is what makes the next
+  // upload of the same file match automatically.
+  const [reusable, setReusable] = useState(!documentId);
 
-  // Load the PDF to draw on: the document we came from, or one already using
-  // this template when re-opening an existing one.
+  /** Only meaningful once the template exists server-side. */
+  const download = async () => {
+    if (isNew || !id) return;
+    setDownloading(true);
+    setError(null);
+    try {
+      await downloadTemplatePdf(id);
+    } catch (e) {
+      setError(e instanceof ApiRequestError ? e.message : 'Téléchargement impossible.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  /**
+   * Load the PDF to draw on, in order of specificity:
+   *   1. the document we were sent here to configure;
+   *   2. the template's own source PDF, for a template created on its own;
+   *   3. (inside source-url) a document already using the template.
+   */
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
       setLoadingPdf(true);
       setError(null);
       try {
-        let docId = documentId;
-        if (!docId && !isNew && id) {
-          const preview = await api<{ documentId: string }>(`/templates/${id}/preview-document`);
-          docId = preview.documentId;
-        }
-        if (!docId) {
-          setError(
-            'Aucun document à afficher pour ce template. Ouvrez-le depuis un document dans un dossier.',
-          );
+        if (documentId) {
+          const doc = await api<Document>(`/documents/${documentId}`);
+          const { url } = await fetchOriginalUrl(documentId);
+          if (cancelled) return;
+          setSourceDocument(doc);
+          setPdfUrl(url);
+          setPageCount(doc.pageCount);
           return;
         }
-        const doc = await api<Document>(`/documents/${docId}`);
-        const { url } = await fetchOriginalUrl(docId);
-        if (cancelled) return;
-        setSourceDocument(doc);
-        setPdfUrl(url);
-        setPageCount(doc.pageCount);
+
+        if (!isNew && id) {
+          const source = await fetchTemplateSource(id);
+          if (cancelled) return;
+          setPdfUrl(source.url);
+          if (source.pageCount) setPageCount(source.pageCount);
+          return;
+        }
+
+        setError(
+          'Aucun document à afficher. Créez le template depuis la page Templates, ou ouvrez-le depuis un document.',
+        );
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof ApiRequestError ? e.message : 'Chargement impossible.');
@@ -93,18 +131,16 @@ export const TemplateEditorPage = () => {
           rect: z.rect,
         })),
       );
+      setReusable(template.reusable);
     } else if (isNew && sourceDocument && name === '') {
       setName(sourceDocument.filename.replace(/\.pdf$/i, ''));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template, sourceDocument, isNew]);
 
-  const handleRendered = useCallback((size: { width: number; height: number }) => {
-    setRendered(size);
-  }, []);
   const handlePageCount = useCallback((count: number) => setPageCount(count), []);
 
-  const addZone = (rect: EditorZone['rect'], type: ZoneType) => {
+  const addZone = (rect: EditorZone['rect'], type: ZoneType, page: number) => {
     const key = newKey();
     setZones((prev) => [...prev, { key, page, type, rect }]);
     setSelectedKey(key);
@@ -120,10 +156,11 @@ export const TemplateEditorPage = () => {
   };
 
   const counts = useMemo(
-    () => ({
-      signature: zones.filter((z) => z.type === 'signature').length,
-      stamp: zones.filter((z) => z.type === 'stamp').length,
-    }),
+    () =>
+      ZONE_TYPE.reduce<Record<ZoneType, number>>(
+        (acc, type) => ({ ...acc, [type]: zones.filter((z) => z.type === type).length }),
+        { signature: 0, stamp: 0, mention: 0, signature_stamp: 0 },
+      ),
     [zones],
   );
 
@@ -135,6 +172,7 @@ export const TemplateEditorPage = () => {
     setError(null);
 
     const input: SaveTemplateInput = {
+      reusable,
       name,
       documentHash: sourceDocument?.documentHash ?? template?.documentHash ?? null,
       filenamePattern: filenamePattern.trim() || null,
@@ -178,6 +216,11 @@ export const TemplateEditorPage = () => {
       description="Placez les zones directement sur le document. Les coordonnées sont enregistrées en valeurs relatives, indépendantes de l’écran."
       actions={
         <>
+          {!isNew && (
+            <Button variant="secondary" loading={downloading} onClick={() => void download()}>
+              Télécharger le PDF
+            </Button>
+          )}
           <Button variant="secondary" onClick={() => navigate(-1)}>
             Annuler
           </Button>
@@ -193,69 +236,48 @@ export const TemplateEditorPage = () => {
         </Card>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_18rem]">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <Button
-              variant={drawing === 'signature' ? 'primary' : 'secondary'}
-              onClick={() => setDrawing(drawing === 'signature' ? null : 'signature')}
-            >
-              + Signature
-            </Button>
-            <Button
-              variant={drawing === 'stamp' ? 'primary' : 'secondary'}
-              onClick={() => setDrawing(drawing === 'stamp' ? null : 'stamp')}
-            >
-              + Tampon
-            </Button>
-            {drawing && (
+          <div className="sticky top-0 z-10 mb-3 flex flex-wrap items-center gap-2 bg-ink-50/95 py-2 backdrop-blur">
+            {ZONE_TYPE.map((type) => (
+              <Button
+                key={type}
+                variant={drawing === type ? 'primary' : 'secondary'}
+                onClick={() => setDrawing(drawing === type ? null : type)}
+              >
+                + {ZONE_TYPE_LABEL[type]}
+              </Button>
+            ))}
+            {drawing ? (
               <span className="text-xs text-ink-400">
-                Tracez un rectangle sur le document pour placer la zone.
+                Tracez un rectangle sur la page voulue.
+              </span>
+            ) : (
+              <span className="text-xs text-ink-400">
+                {pageCount} page{pageCount > 1 ? 's' : ''} · faites défiler pour toutes les voir
               </span>
             )}
-
-            <div className="ml-auto flex items-center gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-              >
-                ‹
-              </Button>
-              <span className="text-sm tabular-nums text-ink-600">
-                Page {page} / {pageCount}
-              </span>
-              <Button
-                variant="ghost"
-                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-                disabled={page >= pageCount}
-              >
-                ›
-              </Button>
-            </div>
           </div>
 
           {pdfUrl ? (
             <PdfViewer
               url={pdfUrl}
-              page={page}
+              maxWidth={700}
               onPageCount={handlePageCount}
-              onRendered={handleRendered}
-            >
-              {rendered && (
+              renderOverlay={(size) => (
                 <ZoneEditor
-                  width={rendered.width}
-                  height={rendered.height}
-                  page={page}
+                  width={size.width}
+                  height={size.height}
+                  page={size.page}
                   zones={zones}
                   drawing={drawing}
-                  onDrawn={addZone}
+                  onDrawn={(rect, type) => addZone(rect, type, size.page)}
                   onChange={updateZone}
                   onSelect={setSelectedKey}
                   selectedKey={selectedKey}
                 />
               )}
-            </PdfViewer>
+            />
           ) : (
             <Card className="p-10 text-center text-sm text-ink-400">
               Aucun document à afficher.
@@ -263,7 +285,9 @@ export const TemplateEditorPage = () => {
           )}
         </div>
 
-        <div className="space-y-4">
+        {/* Sticky, so the zone list and the name field stay usable while
+            scrolling a long document. */}
+        <div className="space-y-4 lg:sticky lg:top-4 lg:self-start">
           <Card className="space-y-4 p-4">
             <Field
               label="Nom du template"
@@ -279,6 +303,23 @@ export const TemplateEditorPage = () => {
               placeholder="contrat-vente-*.pdf"
               hint="Facultatif. Utilisé seulement si l’empreinte du fichier ne correspond à rien."
             />
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="checkbox"
+                checked={reusable}
+                onChange={(e) => setReusable(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-ink-200 accent-brand-600"
+              />
+              <span>
+                <span className="block text-sm font-medium text-ink-800">
+                  Réutilisable pour d’autres documents
+                </span>
+                <span className="mt-0.5 block text-xs text-ink-400">
+                  Coché, ce template apparaît dans la liste et s’appliquera automatiquement au
+                  prochain import du même fichier. Décoché, il ne sert qu’à ce document.
+                </span>
+              </span>
+            </label>
             {sourceDocument && (
               <p className="text-xs text-ink-400">
                 Empreinte du document : {sourceDocument.documentHash.slice(0, 16)}… ·{' '}
@@ -291,7 +332,8 @@ export const TemplateEditorPage = () => {
             <div className="flex items-center justify-between border-b border-ink-200/70 px-4 py-2.5">
               <h2 className="text-sm font-semibold">Zones</h2>
               <span className="text-xs text-ink-400">
-                {counts.signature} signature · {counts.stamp} tampon
+                {counts.signature} signature · {counts.stamp} tampon · {counts.mention} mention ·{' '}
+                {counts.signature_stamp} combiné
               </span>
             </div>
             {zones.length === 0 ? (
@@ -313,12 +355,14 @@ export const TemplateEditorPage = () => {
                       <button
                         className="min-w-0 flex-1 text-left"
                         onClick={() => {
-                          setPage(zone.page);
                           setSelectedKey(zone.key);
+                          document
+                            .querySelector(`[data-page="${zone.page}"]`)
+                            ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }}
                       >
                         <p className="text-sm font-medium">
-                          {zone.type === 'signature' ? 'Signature' : 'Tampon'} · page {zone.page}
+                          {ZONE_TYPE_LABEL[zone.type]} · page {zone.page}
                         </p>
                         <p className="text-xs tabular-nums text-ink-400">
                           x {zone.rect.x.toFixed(3)} · y {zone.rect.y.toFixed(3)} ·{' '}

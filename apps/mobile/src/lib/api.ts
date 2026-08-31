@@ -1,12 +1,22 @@
 import * as SecureStore from 'expo-secure-store';
+import Constants from 'expo-constants';
 import type { ApiError, AuthSession } from '@scansign/shared';
 
 /**
  * The phone talks ONLY to the Scan&Sign backend — never to Supabase directly.
  * That is why this bundle contains no Supabase key of any kind.
+ *
+ * The URL comes from app.config.js, which loads the monorepo-root .env that
+ * Expo would otherwise ignore. The EXPO_PUBLIC_ variable remains a fallback so
+ * an EAS profile can override it directly.
  */
-export const API_URL =
-  process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '') ?? 'http://localhost:8787';
+const configuredApiUrl = (Constants.expoConfig?.extra as { apiUrl?: string } | undefined)?.apiUrl;
+
+export const API_URL = (
+  configuredApiUrl ??
+  process.env.EXPO_PUBLIC_API_URL ??
+  'http://localhost:8787'
+).replace(/\/$/, '');
 
 const SESSION_KEY = 'scansign.session';
 

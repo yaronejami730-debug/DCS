@@ -16,7 +16,11 @@ import {
   pingDevice,
   registerDevice,
 } from './device';
-import { registerForPushNotifications } from './notifications';
+import {
+  pushReasonLabel,
+  registerForPushNotifications,
+  type PushRegistration,
+} from './notifications';
 
 interface AuthContextValue {
   ready: boolean;
@@ -26,6 +30,8 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   enrollDevice: (name: string) => Promise<Device>;
+  /** Why remote push is unavailable, if it is. Shown rather than swallowed. */
+  pushNotice: string | null;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -37,6 +43,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState<string | null>(null);
+  const [pushNotice, setPushNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const boot = async () => {
@@ -84,18 +91,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const enrollDevice = useCallback(async (name: string) => {
-    // Push permission is requested here, at the moment it makes sense to the
-    // user: they have just named the phone that will receive documents.
-    const pushToken = await registerForPushNotifications();
-    const device = await registerDevice(name, pushToken);
+    // Permission is requested here, at the moment it makes sense to the user:
+    // they have just named the phone that will receive documents. Permission
+    // is worth having even when a remote token is impossible, because local
+    // notifications need it too.
+    const registration: PushRegistration = await registerForPushNotifications();
+    setPushNotice(pushReasonLabel(registration.reason));
+    const device = await registerDevice(name, registration.token);
     setDeviceId(device.id);
     setDeviceName(device.name);
     return device;
   }, []);
 
   const value = useMemo(
-    () => ({ ready, session, deviceId, deviceName, signIn, signOut, enrollDevice }),
-    [ready, session, deviceId, deviceName, signIn, signOut, enrollDevice],
+    () => ({ ready, session, deviceId, deviceName, signIn, signOut, enrollDevice, pushNotice }),
+    [ready, session, deviceId, deviceName, signIn, signOut, enrollDevice, pushNotice],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,5 +1,5 @@
 import { PDFDocument, degrees } from 'pdf-lib';
-import type { NormalizedRect, ZoneType } from '@scansign/shared';
+import type { ErrorCode, NormalizedRect, ZoneType } from '@scansign/shared';
 import { PdfPipelineError } from './errors.js';
 import { computeImagePlacement, normalizeRotation } from './geometry.js';
 
@@ -19,6 +19,10 @@ export interface GenerateSignedPdfInput {
   signaturePng?: Uint8Array | null;
   /** Transparent PNG cutout of the stamp. Required if a stamp zone exists. */
   stampPng?: Uint8Array | null;
+  /** Transparent PNG of the "Lu et approuvé" mention, if a zone asks for one. */
+  mentionPng?: Uint8Array | null;
+  /** Signature and stamp captured together as one mark. */
+  combinedPng?: Uint8Array | null;
 }
 
 export interface GenerateSignedPdfResult {
@@ -76,30 +80,33 @@ export const generateSignedPdf = async (
     }
   }
 
-  const needsSignature = zones.some((z) => z.type === 'signature');
-  const needsStamp = zones.some((z) => z.type === 'stamp');
-
-  if (needsSignature && !input.signaturePng?.length) {
-    throw new PdfPipelineError(
-      'SIGNATURE_EXTRACTION_FAILED',
-      'Le document attend une signature mais aucune image détourée n’est disponible.',
-    );
+  // Check every required cutout up front: a document must never come out with
+  // one mark placed and another silently missing.
+  const required: Array<[ZoneType, Uint8Array | null | undefined, ErrorCode, string]> = [
+    ['signature', input.signaturePng, 'SIGNATURE_EXTRACTION_FAILED', 'une signature'],
+    ['stamp', input.stampPng, 'STAMP_EXTRACTION_FAILED', 'un tampon'],
+    ['mention', input.mentionPng, 'MENTION_EXTRACTION_FAILED', 'la mention « Lu et approuvé »'],
+    ['signature_stamp', input.combinedPng, 'COMBINED_EXTRACTION_FAILED', 'un tampon signé'],
+  ];
+  for (const [type, bytes, code, label] of required) {
+    if (zones.some((z) => z.type === type) && !bytes?.length) {
+      throw new PdfPipelineError(
+        code,
+        `Le document attend ${label} mais aucune image détourée n’est disponible.`,
+      );
+    }
   }
-  if (needsStamp && !input.stampPng?.length) {
-    throw new PdfPipelineError(
-      'STAMP_EXTRACTION_FAILED',
-      'Le document attend un tampon mais aucune image détourée n’est disponible.',
-    );
-  }
 
-  const embedded = {
+  const embedded: Record<ZoneType, Awaited<ReturnType<typeof doc.embedPng>> | null> = {
     signature: input.signaturePng?.length ? await doc.embedPng(input.signaturePng) : null,
     stamp: input.stampPng?.length ? await doc.embedPng(input.stampPng) : null,
+    mention: input.mentionPng?.length ? await doc.embedPng(input.mentionPng) : null,
+    signature_stamp: input.combinedPng?.length ? await doc.embedPng(input.combinedPng) : null,
   };
 
   let placed = 0;
   for (const zone of zones) {
-    const image = zone.type === 'signature' ? embedded.signature : embedded.stamp;
+    const image = embedded[zone.type];
     if (!image) continue;
 
     const page = pages[zone.page - 1]!;

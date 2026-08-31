@@ -73,6 +73,10 @@ const envSchema = z.object({
   // console and on the phone straight away. Turn OFF if you enable Supabase
   // email confirmation and want the mail round-trip enforced.
   AUTO_CONFIRM_SIGNUP: bool(true),
+  // Vary each handwritten mark slightly per document and per zone, so a folder
+  // does not carry one identical bitmap stamped repeatedly. Deterministic:
+  // regenerating a document reproduces it exactly. Cosmetic only.
+  SIGNATURE_VARIANTS: bool(true),
   // Set false once your accounts exist to close public account creation.
   ALLOW_SELF_SIGNUP: bool(true),
 });

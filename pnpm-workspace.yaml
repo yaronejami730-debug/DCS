@@ -1,3 +1,13 @@
 packages:
   - "packages/*"
   - "apps/*"
+
+# pnpm settings live here rather than in .npmrc so that npm — which Expo and
+# EAS shell out to — does not warn about options it does not understand.
+#
+# Expo and Metro do not follow pnpm's symlinked store reliably; hoisted is the
+# layout Expo officially supports in monorepos.
+nodeLinker: hoisted
+shamefullyHoist: true
+strictPeerDependencies: false
+autoInstallPeers: true

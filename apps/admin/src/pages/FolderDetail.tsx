@@ -10,7 +10,7 @@ import {
   useTemplates,
   useUploadDocuments,
 } from '../lib/queries';
-import { ApiRequestError } from '../lib/api';
+import { api, ApiRequestError } from '../lib/api';
 import { Page } from '../components/Layout';
 import {
   Button,
@@ -42,6 +42,27 @@ export const FolderDetailPage = () => {
   const [deviceId, setDeviceId] = useState('');
   const [configuring, setConfiguring] = useState<Document | null>(null);
   const [templateId, setTemplateId] = useState('');
+  const [previewing, setPreviewing] = useState<string | null>(null);
+
+  /** Open the document with its zones drawn on it — the placement proof. */
+  const previewZones = async (documentId: string) => {
+    setPreviewing(documentId);
+    setError(null);
+    try {
+      const { url, annotated } = await api<{ url: string; annotated: boolean }>(
+        `/documents/${documentId}/preview-url`,
+      );
+      if (!annotated) {
+        setError("Ce document n'a pas encore de zones à afficher.");
+        return;
+      }
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      setError(e instanceof ApiRequestError ? e.message : 'Aperçu indisponible.');
+    } finally {
+      setPreviewing(null);
+    }
+  };
 
   if (isLoading || !folder) return <Spinner />;
 
@@ -160,7 +181,13 @@ export const FolderDetailPage = () => {
                   <ErrorNote code={doc.errorCode} message={doc.errorMessage} />
                 </div>
                 <DocumentStatusPill status={doc.status} />
-                {doc.status === 'awaiting_template' && (
+                {doc.status === 'completed' ? (
+                  /* Signed and done: the zones were configuration, and the
+                     only thing left to do with the document is take it. */
+                  <Button variant="secondary" onClick={() => void downloadFinalPdf(doc.id)}>
+                    Télécharger le PDF signé
+                  </Button>
+                ) : doc.status === 'awaiting_template' ? (
                   <>
                     <Button
                       variant="secondary"
@@ -173,14 +200,39 @@ export const FolderDetailPage = () => {
                       Associer un template
                     </Button>
                     <Link to={`/templates/new?documentId=${doc.id}`}>
-                      <Button>Configurer</Button>
+                      <Button>Configurer les zones</Button>
                     </Link>
                   </>
-                )}
-                {doc.status === 'completed' && (
-                  <Button variant="secondary" onClick={() => void downloadFinalPdf(doc.id)}>
-                    Télécharger le PDF signé
-                  </Button>
+                ) : (
+                  <>
+                    {/* Zones stay reachable for as long as they still matter —
+                        that is, until the document is signed. A document that
+                        matched a template by hash never passes through
+                        'awaiting_template', so gating these behind that status
+                        left no way at all to review the placement. */}
+                    <Button
+                      variant="secondary"
+                      loading={previewing === doc.id}
+                      onClick={() => void previewZones(doc.id)}
+                    >
+                      Voir les zones
+                    </Button>
+                    {doc.templateId && (
+                      <Link to={`/templates/${doc.templateId}?documentId=${doc.id}`}>
+                        <Button variant="secondary">Modifier les zones</Button>
+                      </Link>
+                    )}
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setConfiguring(doc);
+                        setTemplateId(doc.templateId ?? templates?.items[0]?.id ?? '');
+                      }}
+                      disabled={(templates?.items.length ?? 0) === 0}
+                    >
+                      Changer de template
+                    </Button>
+                  </>
                 )}
               </li>
             ))}

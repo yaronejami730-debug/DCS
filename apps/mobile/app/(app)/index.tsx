@@ -1,9 +1,10 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import type { Folder } from '@scansign/shared';
 import { useAuth } from '../../src/lib/auth';
 import { useMyFolders } from '../../src/lib/queries';
+import { useRealtime } from '../../src/lib/realtime';
 import { Button, FolderPill, Loading, Screen, Subtitle, Title } from '../../src/components/ui';
 import { theme } from '../../src/lib/theme';
 
@@ -12,15 +13,23 @@ const remaining = (folder: Folder): number =>
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { deviceId, deviceName, signOut, session } = useAuth();
-  const { data, isLoading, refetch, isRefetching } = useMyFolders(deviceId);
+  const { deviceId, deviceName, signOut, session, pushNotice } = useAuth();
+  const { data, isLoading, refetch } = useMyFolders(deviceId);
+  // A folder sent from the console lands here on its own, pushed over the
+  // socket. Nothing polls, so the list never reloads under the signer.
+  const { connected } = useRealtime(Boolean(session && deviceId));
 
-  // Coming back from a signature should show fresh statuses immediately.
-  useFocusEffect(
-    useCallback(() => {
-      void refetch();
-    }, [refetch]),
-  );
+  // The spinner is shown only for a refresh the user asked for. A background
+  // refetch triggered by a live update stays invisible.
+  const [pulling, setPulling] = useState(false);
+  const pullToRefresh = useCallback(async () => {
+    setPulling(true);
+    try {
+      await refetch();
+    } finally {
+      setPulling(false);
+    }
+  }, [refetch]);
 
   const folders = data?.items ?? [];
   const waiting = folders.filter((f) => f.status !== 'completed');
@@ -34,7 +43,7 @@ export default function HomeScreen() {
         contentContainerStyle={styles.content}
         data={waiting}
         keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} />}
+        refreshControl={<RefreshControl refreshing={pulling} onRefresh={() => void pullToRefresh()} />}
         ListHeaderComponent={
           <View style={styles.header}>
             <Title>Bonjour{session?.user.displayName ? ` ${session.user.displayName}` : ''}</Title>
@@ -43,7 +52,23 @@ export default function HomeScreen() {
                 ? 'Aucun document en attente.'
                 : `${waiting.length} dossier${waiting.length > 1 ? 's' : ''} en attente de signature.`}
             </Subtitle>
-            <Text style={styles.device}>{deviceName ?? 'Cet appareil'}</Text>
+            {pushNotice && (
+              <View style={styles.notice}>
+                <Text style={styles.noticeText}>{pushNotice}</Text>
+              </View>
+            )}
+            <View style={styles.deviceRow}>
+              <View
+                style={[
+                  styles.liveDot,
+                  { backgroundColor: connected ? theme.color.success : theme.color.border },
+                ]}
+              />
+              <Text style={styles.device}>
+                {deviceName ?? 'Cet appareil'}
+                {connected ? ' · en direct' : ''}
+              </Text>
+            </View>
           </View>
         }
         renderItem={({ item }) => (
@@ -107,7 +132,17 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   content: { padding: 20, paddingBottom: 40 },
   header: { marginBottom: 20 },
-  device: { marginTop: 10, fontSize: 13, color: theme.color.muted },
+  notice: {
+    marginTop: 12,
+    backgroundColor: theme.color.warningSoft,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  noticeText: { color: theme.color.warning, fontSize: 12.5, lineHeight: 17 },
+  deviceRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
+  liveDot: { width: 7, height: 7, borderRadius: 4 },
+  device: { fontSize: 13, color: theme.color.muted },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

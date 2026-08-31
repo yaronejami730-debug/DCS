@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { ONLINE_WINDOW_MS, type DashboardStats, type DocumentStatus } from '@scansign/shared';
 import { db } from '../lib/supabase.js';
 import { requireAuth, type AppBindings } from '../lib/auth.js';
+import { listNotifications } from '../services/notify.js';
 
 export const dashboardRoutes = new Hono<AppBindings>();
 dashboardRoutes.use('*', requireAuth);
@@ -45,6 +46,13 @@ dashboardRoutes.get('/', async (c) => {
     devicesOnline,
   };
   return c.json(stats);
+});
+
+/** What the system has told this account, and whether it got through. */
+dashboardRoutes.get('/notifications', async (c) => {
+  const user = c.get('user');
+  const items = await listNotifications(user.id);
+  return c.json({ items, total: items.length });
 });
 
 /** Recent activity feed shown under the dashboard tiles. */

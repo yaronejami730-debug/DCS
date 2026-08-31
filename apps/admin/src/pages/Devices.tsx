@@ -1,11 +1,16 @@
 import { useState } from 'react';
-import { useDeleteDevice, useDevices, useRenameDevice } from '../lib/queries';
+import { useDeleteDevice, useDevices, useNotifications, useRenameDevice } from '../lib/queries';
 import { Page } from '../components/Layout';
 import { Button, Card, EmptyState, Field, Modal, Spinner, formatDate } from '../components/ui';
 
 export const DevicesPage = () => {
   const { data, isLoading } = useDevices();
+  const { data: notifications } = useNotifications();
   const rename = useRenameDevice();
+
+  // A device without a push token cannot be reached when the app is closed.
+  // Saying so here beats a silent "skipped" in a log nobody reads.
+  const withoutPush = (data?.items ?? []).filter((d) => !d.pushToken).length;
   const remove = useDeleteDevice();
   const [editing, setEditing] = useState<{ id: string; name: string } | null>(null);
 
@@ -14,6 +19,23 @@ export const DevicesPage = () => {
       title="Appareils"
       description="Les iPhones connectés à ce compte. Un appareil apparaît dès qu’il se connecte avec vos identifiants dans l’application."
     >
+      {withoutPush > 0 && (
+        <Card className="mb-4 border-l-4 border-l-amber-500 p-4">
+          <p className="text-sm font-medium text-amber-800">
+            {withoutPush} appareil(s) sans notifications à distance
+          </p>
+          <p className="mt-1 text-sm text-ink-600">
+            Ces appareils reçoivent bien les documents en direct et affichent une alerte tant que
+            l’application est ouverte. Pour être prévenus application fermée, il faut un build de
+            développement : <code className="rounded bg-ink-100 px-1">eas init</code> puis{' '}
+            <code className="rounded bg-ink-100 px-1">
+              eas build --profile development --platform ios
+            </code>
+            .
+          </p>
+        </Card>
+      )}
+
       {isLoading ? (
         <Spinner />
       ) : (data?.items.length ?? 0) === 0 ? (
@@ -66,6 +88,40 @@ export const DevicesPage = () => {
           </ul>
         </Card>
       )}
+
+      <Card className="mt-6">
+        <div className="border-b border-ink-200/70 px-5 py-3">
+          <h2 className="text-sm font-semibold">Notifications envoyées</h2>
+        </div>
+        {(notifications?.items.length ?? 0) === 0 ? (
+          <p className="px-5 py-8 text-center text-sm text-ink-400">Aucune notification.</p>
+        ) : (
+          <ul className="divide-y divide-ink-200/70">
+            {notifications!.items.slice(0, 15).map((entry) => (
+              <li key={entry.id} className="flex items-start gap-3 px-5 py-3">
+                <span
+                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                    entry.status === 'sent'
+                      ? 'bg-emerald-500'
+                      : entry.status === 'failed'
+                        ? 'bg-red-500'
+                        : 'bg-ink-200'
+                  }`}
+                  title={entry.status}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{entry.title}</p>
+                  <p className="text-xs text-ink-600">{entry.body}</p>
+                  <p className="mt-0.5 text-xs text-ink-400">
+                    {formatDate(entry.created_at)}
+                    {entry.error ? ` · ${entry.error}` : ''}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
 
       <Modal open={editing !== null} title="Renommer l’appareil" onClose={() => setEditing(null)}>
         <form

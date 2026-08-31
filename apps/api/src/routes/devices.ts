@@ -9,6 +9,7 @@ import { db } from '../lib/supabase.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { requireAuth, type AppBindings } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
+import { publish } from '../lib/realtime.js';
 
 export const deviceRoutes = new Hono<AppBindings>();
 deviceRoutes.use('*', requireAuth);
@@ -71,6 +72,7 @@ deviceRoutes.post('/register', async (c) => {
 
   if (error || !data) throw badRequest(error?.message ?? "Enregistrement de l'appareil impossible.");
 
+  publish(user.id, { type: 'device.updated', deviceId: data.id });
   await audit({
     ownerId: user.id,
     action: 'device.registered',

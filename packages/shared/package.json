@@ -11,12 +11,13 @@
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "echo \"@scansign/shared: no runtime, covered by consumers\" && exit 0"
+    "test": "vitest run"
   },
   "dependencies": {
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
   }
 }

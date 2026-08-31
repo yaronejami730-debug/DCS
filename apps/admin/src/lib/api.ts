@@ -99,4 +99,39 @@ export const api = async <T>(path: string, options: RequestOptions = {}): Promis
   return body;
 };
 
+/**
+ * Fetch a binary response (a PDF) with the same auth and refresh handling as
+ * `api`, and hand it to the browser as a download.
+ */
+export const downloadFile = async (path: string, fallbackName: string): Promise<void> => {
+  const send = async (token: string | null) =>
+    fetch(`${API_URL}${path}`, {
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+
+  let session = loadSession();
+  let res = await send(session?.accessToken ?? null);
+  if (res.status === 401) {
+    session = await refresh();
+    if (session) res = await send(session.accessToken);
+  }
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as ApiError;
+    throw new ApiRequestError(res.status, body.error ?? `Erreur ${res.status}`, body.code);
+  }
+
+  const disposition = res.headers.get('content-disposition') ?? '';
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = match?.[1] ?? fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
 export { API_URL };

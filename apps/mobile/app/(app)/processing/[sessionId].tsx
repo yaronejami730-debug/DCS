@@ -1,7 +1,9 @@
+import { useEffect, useRef } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ERROR_CODE_LABEL, type ErrorCode } from '@scansign/shared';
 import { useSession } from '../../../src/lib/queries';
+import { hapticError, hapticSuccess } from '../../../src/lib/haptics';
 import { Button, Screen, Subtitle, Title } from '../../../src/components/ui';
 import { theme } from '../../../src/lib/theme';
 
@@ -17,6 +19,16 @@ export default function ProcessingScreen() {
   const status = session?.status ?? 'processing';
   const failed = status === 'error';
   const done = status === 'completed';
+
+  // The signer is often not looking at the screen while this runs, so the
+  // outcome is announced in the hand as well.
+  const announced = useRef(false);
+  useEffect(() => {
+    if (announced.current || (!done && !failed)) return;
+    announced.current = true;
+    if (done) hapticSuccess();
+    else hapticError();
+  }, [done, failed]);
 
   return (
     <Screen>

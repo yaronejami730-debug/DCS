@@ -131,8 +131,12 @@ account is what you will use on the phone.
 ### 6. iPhone app
 
 ```bash
-pnpm dev:mobile
+pnpm dev:mobile          # always port 8083
+pnpm dev:mobile:clear    # same, with Metro's cache cleared
 ```
+
+The port is pinned so a second, stale Metro cannot end up serving the phone an
+old module map — which looks exactly like a missing dependency.
 
 Set `EXPO_PUBLIC_API_URL` in `.env` to your machine's **LAN IP** — a physical
 iPhone cannot reach your Mac's `localhost`:
@@ -162,8 +166,9 @@ they are valid. It fails loudly at the first step that does not work.
 Unit tests:
 
 ```bash
-pnpm test           # 52 tests: coordinate maths, PDF generation, image
-                    # pipeline, extraction client, job queue
+pnpm test           # 134 tests: coordinate maths, PDF generation and
+                    # annotation, selection geometry, image pipeline, ink
+                    # detection, extraction client, realtime socket, job queue
 pnpm typecheck
 ```
 
@@ -204,6 +209,146 @@ template in this order:
 A filename alone is never enough. When you configure a document by hand, the
 backend back-fills the template's hash, so the next upload of that file matches
 automatically.
+
+### Marks, and how they are captured
+
+A template places four kinds of mark: **signature**, **tampon**, the
+**« Lu et approuvé »** mention some contracts require, and **tampon +
+signature** for the very common case of a stamp pressed across the signature —
+framing those two separately would cut each in half. Each has its own zones,
+cutout and placement.
+
+The photo can be taken with the camera or picked from the phone's library.
+
+Handwritten marks are varied between documents and between zones, so a folder
+does not carry one identical bitmap stamped repeatedly — a person signing five
+documents produces five slightly different signatures.
+
+The variation is **in the pen, not the letterforms**: stroke weight and ink
+density, applied to coverage alone, plus a slight slant and a shallow drift of
+the baseline. Two signings by the same hand differ mainly in how the pen was
+loaded and how hard it was pressed — one comes out fuller and darker, the next
+thinner and drier — while the shapes stay unmistakably the same.
+
+Two approaches were tried and rejected on the way. Rotation and scale alone were
+invisible: variants differed as files but not to the eye, because an affine
+transform moves every point in lockstep. A strong displacement field made them
+differ, but in the wrong way — the signature visibly rippled, which no hand
+does. The drift that remains is slow and shallow enough to read as drift.
+
+**One variant per document, chosen by the signer.** After framing a mark and
+checking its cutout, the signer generates as many variants as the folder has
+documents and decides which goes where — the invoice gets one signing, the quote
+another. A variant is derived from its index alone, so the image approved on the
+phone is exactly the image stamped on that document. Where nothing is assigned,
+an index is derived from the document id so documents still differ. The waves stay slow enough to move the letterforms
+without distorting them. A stamp is left alone: it is a physical die and
+reproduces identically by design. Set `SIGNATURE_VARIANTS=false` to turn it off.
+It is cosmetic — it changes how the marks sit on the page, not what the document
+is.
+
+The shutter is instant: the framing screen opens on the local photo file the
+moment it is taken, and the upload, the server-side re-encode and the ink
+detection all resolve behind it. A tap of haptic feedback marks the capture, so
+nothing has to be waited on to know it worked.
+
+The signer picks how to capture them, because neither way wins everywhere:
+
+| Mode | What happens |
+| --- | --- |
+| **Une seule photo** | one sheet holding every mark, then frame each one |
+| **Une photo par élément** | one photo per mark, used whole — nothing to frame |
+
+The number of steps follows what the folder's templates actually ask for, taken
+as the **union across its documents**: a folder holding an invoice that wants a
+signed stamp and a balance sheet that wants a plain signature asks for both, and
+each document then receives only what its own template calls for.
+
+`GET /folders/:id/required-marks` is what the phone asks, and the order comes
+from `CAPTURE_ORDER` in `@scansign/shared` — derived from `ZONE_TYPE` rather
+than written out, with a compile-time check that nothing is missing. A
+hand-written list had dropped `signature_stamp`, so a folder needing a signed
+stamp was never asked for one and failed at processing.
+
+### Ink quality
+
+Photographed ink is mid-grey on beige under whatever light was in the room, and
+the engine thresholds hard. Two artefacts follow, and both are corrected after
+extraction, where the paper is already gone and only the strokes are touched:
+
+- **washed out** — strokes keep the photo's grey. Measured at luminance 72 of
+  255 on a dim capture; re-inking brings it to 45, keyed off the ink's mean
+  rather than its darkest pixel, and preserves hue so a blue pen stays blue.
+- **pixelated** — the threshold leaves an almost binary mask (1.2% of pixels at
+  partial alpha), and a binary mask is a staircase. The cutout is upscaled with
+  Lanczos and its alpha channel alone is softened, taking the edge gradient from
+  8% to around 60% of the ink.
+
+The engine's own `smoothing` option was tried and rejected: at every level it
+blurs the whole mark rather than its edge, dropping opacity from 246 to 63 —
+the washed-out problem back, worse.
+
+### Checking the cutout before committing
+
+Background removal is the step most likely to disappoint — a pale stamp, a
+shadow across the paper, ink too light — and the photo gives the signer no way
+to judge it. During framing, **Voir le résultat** runs the real pipeline and
+shows the transparent cutout that will be stamped onto the contract, so the box
+can be widened or the photo retaken while it still costs nothing.
+
+### Notifications
+
+Three layers, in order of what reaches the signer soonest:
+
+| | When it works | What it needs |
+| --- | --- | --- |
+| **Live socket** | app open | nothing |
+| **Local notification** | app running, foreground or background | notification permission |
+| **Remote push** | app closed or killed | an EAS project + a development build |
+
+The first two work today. The app holds a live socket, so when the console sends
+a folder the device already knows — it raises the banner itself rather than
+waiting on a push service. That is why alerts work in Expo Go, where remote push
+does not.
+
+Remote push is the only piece that needs setting up, and only for the
+app-is-closed case:
+
+```bash
+cd apps/mobile
+eas init            # writes a real projectId into app.json
+eas build --profile development --platform ios
+```
+
+Until then the app says why on its home screen and the console says so under
+**Appareils**, instead of recording a silent "skipped" nobody reads. Expo Go on
+iOS cannot receive remote push at all since SDK 53 — that is a platform limit,
+not a configuration mistake.
+
+
+`apps/api/src/services/notify.ts` holds every server-sent message. Two rules
+shape them: say what happened *and* what to do about it, and never send
+something the recipient cannot act on. A failed extraction tells the signer to
+retake the photo on a well-lit sheet rather than reporting a code.
+
+Delivery is best-effort: a push that fails never fails the work it reports on,
+and every attempt is recorded in `notifications` so the console can show what
+got through.
+
+### Reviewing a template
+
+**Templates → Télécharger le PDF** (also in the editor) returns the document
+with every zone drawn where the signature and stamp will actually land:
+dashed box, colour per kind, labelled, with the template name in the footer.
+
+It is generated by the same coordinate conversion the real signing step uses,
+page rotation included — a preview drawn by separate code would be worth much
+less, because the thing worth checking is precisely that conversion.
+
+Use it to confirm placement before sending a folder out, to hand a colleague
+proof of where a signature will go, or to archive what a template looked like.
+It needs at least one document already using the template, since the zones have
+to be drawn on something.
 
 ### Swapping the extraction engine
 
@@ -291,8 +436,15 @@ native binaries). Run it with `node apps/api/dist/index.js`. It needs the same
 
 ## Useful commands
 
+`npm start` brings up the API, the console and Metro together. It checks the
+ports first: if something is already listening it says what, with its pid, and
+what to do — rather than dying on a stack trace that only names the port. It
+never kills anything, since a process on one of those ports may well be another
+project.
+
 | Command | What it does |
 | --- | --- |
+| `npm start` | API + console + Metro, with a port preflight |
 | `pnpm dev` | API + console together |
 | `pnpm dev:mobile` | Expo dev server |
 | `pnpm extractor:up` / `:down` / `:logs` | the extraction engine |
@@ -301,6 +453,12 @@ native binaries). Run it with `node apps/api/dist/index.js`. It needs the same
 | `pnpm typecheck` | typecheck every package |
 | `pnpm build` | production build of API + console |
 | `pnpm smoke <email> <pass>` | end-to-end test of the real stack |
+| `node tools/smoke-three-marks.mjs <email> <pass>` | signature + stamp + mention, both capture modes |
+| `node tools/smoke-combined.mjs <email> <pass>` | the combined tampon+signature mark and variants |
+| `node tools/smoke-variants.mjs <email> <pass>` | one variant per document, assigned and verified |
+| `node tools/smoke-per-mark.mjs <email> <pass>` | per-mark capture stays in one session |
+| `node tools/smoke-mixed-marks.mjs <email> <pass>` | a folder whose documents want different marks |
+| `node tools/browser-check.mjs <url>` | load the console in a real browser, report JS errors |
 | `pnpm account list \| create \| confirm \| password` | account admin |
 
 ## License

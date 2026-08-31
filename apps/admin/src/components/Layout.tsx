@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import { useRealtime } from '../lib/useRealtime';
 import { Button } from './ui';
 
 const NAV = [
@@ -12,6 +13,8 @@ const NAV = [
 export const Layout = () => {
   const { session, signOut } = useAuth();
   const navigate = useNavigate();
+  // Opened once for the whole console, so every page updates live.
+  const { connected } = useRealtime();
 
   return (
     <div className="flex min-h-full">
@@ -38,6 +41,16 @@ export const Layout = () => {
           ))}
         </nav>
         <div className="border-t border-ink-200/70 p-3">
+          <div className="flex items-center gap-1.5 px-2 pb-1">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                connected ? 'bg-emerald-500' : 'bg-ink-200'
+              }`}
+            />
+            <span className="text-[11px] text-ink-400">
+              {connected ? 'Temps réel actif' : 'Reconnexion…'}
+            </span>
+          </div>
           <p className="truncate px-2 text-xs text-ink-400">{session?.user.email}</p>
           <Button
             variant="ghost"
@@ -69,7 +82,7 @@ export const Page = ({
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) => (
-  <div className="mx-auto max-w-6xl px-8 py-8">
+  <div className="mx-auto max-w-7xl px-8 py-8">
     <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>

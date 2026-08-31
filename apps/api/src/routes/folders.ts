@@ -13,7 +13,8 @@ import { requireAuth, type AppBindings } from '../lib/auth.js';
 import { uploadObject } from '../lib/storage.js';
 import { audit } from '../lib/audit.js';
 import { findTemplateForDocument } from '../services/templates.js';
-import { sendPush } from '../services/push.js';
+import { notifyFolderDelivered, notifyFolderSent } from '../services/notify.js';
+import { publish } from '../lib/realtime.js';
 import { FOLDER_SELECT, toFolder, type FolderRow } from './mappers.js';
 
 export const folderRoutes = new Hono<AppBindings>();
@@ -164,7 +165,19 @@ folderRoutes.post('/:id/documents', async (c) => {
     });
   }
 
-  return c.json(toFolder(await loadFolder(folder.id, user.id)), 201);
+  // Adding a document to a folder that was already signed makes the folder
+  // unfinished again: the new document has not been signed, and leaving the
+  // badge on "Terminé" would claim work that has not happened.
+  if (folder.status === 'completed' || folder.status === 'error') {
+    await db
+      .from('folders')
+      .update({ status: 'pending', completed_at: null, error_code: null, error_message: null })
+      .eq('id', folder.id);
+  }
+
+  const refreshed = await loadFolder(folder.id, user.id);
+  publish(user.id, { type: 'folder.updated', folderId: folder.id, status: refreshed.status });
+  return c.json(toFolder(refreshed), 201);
 });
 
 /** Assign the folder to a device and notify it. This is the "Envoyer" button. */
@@ -201,13 +214,15 @@ folderRoutes.post('/:id/send', async (c) => {
     .select(FOLDER_SELECT)
     .single<FolderRow>();
 
-  await sendPush({
-    ownerId: user.id,
-    deviceId: device.id,
+  await notifyFolderSent(user.id, folder.id, folder.documents?.length ?? 1);
+
+  // Reaches every open client of this account: the phone shows the folder
+  // without waiting for its poll, the console flips the badge at the same time.
+  publish(user.id, {
+    type: 'folder.sent',
     folderId: folder.id,
-    title: 'Nouveau document à signer',
-    body: 'Un nouveau document est disponible pour signature.',
-    data: { kind: 'folder.sent' },
+    deviceId: device.id,
+    name: folder.name,
   });
 
   await audit({
@@ -233,6 +248,7 @@ folderRoutes.post('/:id/ack', async (c) => {
     .select(FOLDER_SELECT)
     .single<FolderRow>();
 
+  await notifyFolderDelivered(user.id, folder.id);
   await audit({ ownerId: user.id, folderId: folder.id, action: 'folder.delivered' });
   return c.json(toFolder(data!));
 });
@@ -245,5 +261,6 @@ folderRoutes.delete('/:id', async (c) => {
     .eq('id', c.req.param('id'))
     .eq('owner_id', user.id);
   if (error) throw badRequest(error.message);
+  publish(user.id, { type: 'folder.deleted', folderId: c.req.param('id') });
   return c.json({ ok: true });
 });

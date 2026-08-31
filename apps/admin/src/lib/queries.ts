@@ -8,7 +8,7 @@ import type {
   SaveTemplateInput,
   Template,
 } from '@scansign/shared';
-import { api } from './api';
+import { api, downloadFile } from './api';
 
 /**
  * Statuses move on the server (a phone signs, a job finishes), so lists poll.
@@ -26,6 +26,24 @@ export const useActivity = () =>
       api<Paginated<{ id: string; action: string; created_at: string; metadata: Record<string, unknown> }>>(
         '/dashboard/activity',
       ),
+    ...LIVE,
+  });
+
+export interface NotificationRow {
+  id: string;
+  title: string;
+  body: string;
+  status: string;
+  error: string | null;
+  created_at: string;
+  folder_id: string | null;
+}
+
+/** What the system told this account, and whether it got through. */
+export const useNotifications = () =>
+  useQuery({
+    queryKey: ['notifications'],
+    queryFn: () => api<Paginated<NotificationRow>>('/dashboard/notifications'),
     ...LIVE,
   });
 
@@ -161,6 +179,30 @@ export const downloadFinalPdf = async (documentId: string): Promise<void> => {
   a.remove();
   URL.revokeObjectURL(objectUrl);
 };
+
+/** Download the template as a PDF with its zones drawn on the document. */
+export const downloadTemplatePdf = (templateId: string) =>
+  downloadFile(`/templates/${templateId}/export`, 'template.pdf');
+
+/** Create a template from a name and a PDF, with no folder involved. */
+export const useCreateTemplateFromPdf = () => {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ name, file }: { name: string; file: File }) => {
+      const form = new FormData();
+      form.append('name', name);
+      form.append('file', file);
+      return api<Template>('/templates/upload', { method: 'POST', form });
+    },
+    onSuccess: () => invalidate('templates'),
+  });
+};
+
+/** The PDF a template was configured against — what the editor draws on. */
+export const fetchTemplateSource = (templateId: string) =>
+  api<{ url: string; filename: string; pageCount: number | null }>(
+    `/templates/${templateId}/source-url`,
+  );
 
 export const fetchOriginalUrl = (documentId: string) =>
   api<{ url: string; filename: string }>(`/documents/${documentId}/original-url`);

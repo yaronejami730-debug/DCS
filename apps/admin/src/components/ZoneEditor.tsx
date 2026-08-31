@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { NormalizedRect, ZoneType } from '@scansign/shared';
+import { ZONE_TYPE_LABEL, type NormalizedRect, type ZoneType } from '@scansign/shared';
 
 export interface EditorZone {
   /** Local id; the server assigns real ids on save. */
@@ -12,6 +12,8 @@ export interface EditorZone {
 const TONE: Record<ZoneType, { box: string; label: string }> = {
   signature: { box: 'border-brand-600 bg-brand-500/15', label: 'bg-brand-600' },
   stamp: { box: 'border-emerald-600 bg-emerald-500/15', label: 'bg-emerald-600' },
+  mention: { box: 'border-amber-600 bg-amber-500/15', label: 'bg-amber-600' },
+  signature_stamp: { box: 'border-purple-600 bg-purple-500/15', label: 'bg-purple-600' },
 };
 
 const MIN_SIZE = 0.02;
@@ -169,7 +171,7 @@ export const ZoneEditor = ({
             <span
               className={`absolute -top-5 left-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-white ${tone.label}`}
             >
-              {zone.type === 'signature' ? 'Signature' : 'Tampon'}
+              {ZONE_TYPE_LABEL[zone.type]}
             </span>
             <span
               onPointerDown={(e) => startTransform(e, zone, 'resize')}

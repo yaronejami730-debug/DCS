@@ -2,6 +2,7 @@ import sharp from 'sharp';
 import type { NormalizedRect } from '@scansign/shared';
 import { normalizedToPixelRect } from '@scansign/pdf';
 import { HttpError } from '../lib/errors.js';
+import { restoreInk } from './ink.js';
 
 export interface NormalizedPhoto {
   bytes: Uint8Array;
@@ -89,6 +90,7 @@ export const cropNormalizedRegion = async (
 export const trimTransparentBorder = async (
   png: Uint8Array,
   failureCode: string,
+  { restore = true }: { restore?: boolean } = {},
 ): Promise<{ bytes: Uint8Array; width: number; height: number }> => {
   const noInk = () =>
     new HttpError(
@@ -120,7 +122,25 @@ export const trimTransparentBorder = async (
       .png()
       .toBuffer({ resolveWithObject: true });
     if (info.width < 4 || info.height < 4) throw noInk();
-    return { bytes: new Uint8Array(data), width: info.width, height: info.height };
+
+    // Photographed ink keeps the grey value it had under the room's light, so
+    // a cutout that is correct can still land on the contract looking washed
+    // out. Re-inking happens here, after trimming, so every caller — the real
+    // pipeline and the on-screen preview alike — sees the same result.
+    if (!restore) {
+      return { bytes: new Uint8Array(data), width: info.width, height: info.height };
+    }
+
+    const bytes = await restoreInk(new Uint8Array(data));
+    // Restoration upscales, so the dimensions have to be re-read: reporting the
+    // pre-restoration size would hand callers numbers that do not describe the
+    // image they were given.
+    const restored = await sharp(Buffer.from(bytes)).metadata();
+    return {
+      bytes,
+      width: restored.width ?? info.width,
+      height: restored.height ?? info.height,
+    };
   } catch (error) {
     if (error instanceof HttpError) throw error;
     // `trim` throws when the image is uniform — again, nothing was extracted.

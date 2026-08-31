@@ -9,14 +9,17 @@
     "node": ">=20.19.0"
   },
   "scripts": {
-    "build": "pnpm --filter @scansign/api build && pnpm --filter @scansign/admin build",
-    "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
-    "lint": "pnpm -r lint",
+    "prestart": "node tools/preflight.mjs",
+    "start": "pnpm --parallel --filter @scansign/api --filter @scansign/admin --filter @scansign/mobile dev",
     "dev": "pnpm --parallel --filter @scansign/api --filter @scansign/admin dev",
     "dev:api": "pnpm --filter @scansign/api dev",
     "dev:admin": "pnpm --filter @scansign/admin dev",
     "dev:mobile": "pnpm --filter @scansign/mobile start",
+    "dev:mobile:clear": "pnpm --filter @scansign/mobile start:clear",
+    "build": "pnpm --filter @scansign/api build && pnpm --filter @scansign/admin build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
     "extractor:up": "docker compose -f services/signature-remove-bg/docker-compose.yml up -d",
     "extractor:down": "docker compose -f services/signature-remove-bg/docker-compose.yml down",
     "extractor:logs": "docker compose -f services/signature-remove-bg/docker-compose.yml logs -f",
@@ -27,6 +30,7 @@
     "account": "node apps/api/scripts/account.mjs"
   },
   "devDependencies": {
+    "playwright": "^1.62.1",
     "typescript": "5.9.3"
   }
 }

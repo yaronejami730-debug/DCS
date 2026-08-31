@@ -6,6 +6,7 @@ import type {
   SessionStatus,
   ZoneType,
 } from './status.js';
+import type { CaptureMode } from './status.js';
 import type { NormalizedRect } from './geometry.js';
 
 /** An account. The same account signs in on the web console and on the iPhone. */
@@ -79,11 +80,16 @@ export interface Template {
   id: string;
   ownerId: string;
   name: string;
+  /** False = tied to one document; hidden from the library, never auto-matched. */
+  reusable: boolean;
   /** SHA-256 of the source PDF bytes. Primary matching key. */
   documentHash: string | null;
   /** Fallback matcher, e.g. "contrat-vente-*.pdf". */
   filenamePattern: string | null;
   pageCount: number | null;
+  /** Storage path of the PDF this template was configured against. */
+  sourcePdfPath: string | null;
+  sourceFilename: string | null;
   createdAt: string;
   updatedAt: string;
   zones?: TemplateZone[];
@@ -94,11 +100,14 @@ export interface SigningSession {
   folderId: string;
   deviceId: string | null;
   status: SessionStatus;
+  captureMode: CaptureMode;
   photoPath: string | null;
   photoWidth: number | null;
   photoHeight: number | null;
   signatureImagePath: string | null;
   stampImagePath: string | null;
+  mentionImagePath: string | null;
+  signatureStampImagePath: string | null;
   errorCode: ErrorCode | null;
   errorMessage: string | null;
   createdAt: string;

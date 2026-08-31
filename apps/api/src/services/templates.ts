@@ -8,6 +8,7 @@ export interface TemplateRow {
   document_hash: string | null;
   filename_pattern: string | null;
   page_count: number | null;
+  reusable: boolean;
 }
 
 export interface ZoneRow {
@@ -58,10 +59,13 @@ export const findTemplateForDocument = async (params: {
 }): Promise<{ template: TemplateRow; matchedBy: 'hash' | 'filename' } | null> => {
   const { ownerId, documentHash, filename, pageCount } = params;
 
+  // Only reusable templates take part in matching: a template configured for
+  // one document must never silently attach itself to somebody else's import.
   const { data: byHash } = await db
     .from('templates')
-    .select('id, name, document_hash, filename_pattern, page_count')
+    .select('id, name, document_hash, filename_pattern, page_count, reusable')
     .eq('owner_id', ownerId)
+    .eq('reusable', true)
     .eq('document_hash', documentHash)
     .limit(1)
     .maybeSingle<TemplateRow>();
@@ -70,8 +74,9 @@ export const findTemplateForDocument = async (params: {
 
   const { data: candidates } = await db
     .from('templates')
-    .select('id, name, document_hash, filename_pattern, page_count')
+    .select('id, name, document_hash, filename_pattern, page_count, reusable')
     .eq('owner_id', ownerId)
+    .eq('reusable', true)
     .not('filename_pattern', 'is', null)
     .returns<TemplateRow[]>();
 
