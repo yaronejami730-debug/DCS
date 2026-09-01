@@ -154,6 +154,19 @@ export const CropReturnPage = () => {
   const [served, setServed] = useState<Array<{ id: string; state: ServedState }>>([]);
 
   const preparedFor = useRef<string | null>(null);
+  /**
+   * The scan's signed URL, read through a ref on purpose.
+   *
+   * The returns list repolls every 4s and each poll signs a FRESH url for the
+   * same scan. With the url in the effect's deps, every poll re-ran the
+   * effect, whose cleanup cancelled the download in flight — and the prepare
+   * guard then blocked any restart. Net effect: a spinner stuck on
+   * « Téléchargement du scan… » forever. The effect now keys on the stable
+   * identity (return id + page) and reads whichever url is current when it
+   * actually fetches.
+   */
+  const urlRef = useRef<string | undefined>(item?.url);
+  urlRef.current = item?.url;
 
   // First unserved contract is the natural next target.
   useEffect(() => {
@@ -184,10 +197,12 @@ export const CropReturnPage = () => {
       setCurrent(null);
       try {
         setPrepareStep('Téléchargement du scan…');
+        const url = urlRef.current;
+        if (!url) throw new Error('URL du scan indisponible');
         const blob =
           item.contentType === 'application/pdf'
-            ? await rasterise(item.url!, page)
-            : await fetchImage(item.url!);
+            ? await rasterise(url, page)
+            : await fetchImage(url);
         if (cancelled) return;
         setPageBlob(blob);
 
@@ -211,8 +226,9 @@ export const CropReturnPage = () => {
     return () => {
       cancelled = true;
     };
+    // item?.url deliberately absent: it changes on every poll. See urlRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item?.id, item?.url, page, folderId]);
+  }, [item?.id, page, folderId]);
 
   const handleChange = useCallback((rect: NormalizedRect) => setCurrent(rect), []);
 
