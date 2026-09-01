@@ -10,8 +10,8 @@ import {
   type ZoneType,
 } from '@scansign/shared';
 import {
+  useDocumentZones,
   useFolder,
-  useRequiredMarks,
   useReturns,
   useStartCropSession,
   useSubmitRegions,
@@ -131,7 +131,7 @@ export const CropReturnPage = () => {
 
   const { data: folder } = useFolder(folderId);
   const { data: returns } = useReturns(folderId);
-  const { data: requiredMarks } = useRequiredMarks(folderId);
+
   const startSession = useStartCropSession();
   const submit = useSubmitRegions();
   const markHandled = useMarkReturnHandled();
@@ -156,6 +156,8 @@ export const CropReturnPage = () => {
   const [applying, setApplying] = useState(false);
   /** documentId -> outcome, in the order they were served. */
   const [served, setServed] = useState<Array<{ id: string; state: ServedState }>>([]);
+
+  const { data: zonesData, isLoading: zonesLoading } = useDocumentZones(targetDoc || undefined);
 
   const preparedFor = useRef<string | null>(null);
   /** Bumped by the retry button to force the prepare effect to run again. */
@@ -261,7 +263,30 @@ export const CropReturnPage = () => {
 
   const handleChange = useCallback((rect: NormalizedRect) => setCurrent(rect), []);
 
-  const markChoices: ZoneType[] = marksToCapture(requiredMarks ?? {});
+  /**
+   * The marks this target document actually has zones for.
+   *
+   * Picking the document first is the point: the operator says "this goes on
+   * that contract", and the capture types then narrow to what that contract can
+   * receive. A mark with no matching zone in the document would be extracted
+   * and then have nowhere to land — the engine matches by type — so it must not
+   * be offered here.
+   */
+  const documentZones = zonesData?.zones ?? [];
+  const zoneTypesInDoc = Array.from(new Set(documentZones.map((z) => z.type)));
+  const markChoices: ZoneType[] = marksToCapture(
+    Object.fromEntries(zoneTypesInDoc.map((t) => [t, 1])),
+  ).filter((m) => zoneTypesInDoc.includes(m));
+
+  // Keep the selected mark inside what the chosen document offers. Picking a
+  // new document whose zones do not include the current mark would otherwise
+  // leave a stale, unplaceable type selected.
+  useEffect(() => {
+    if (markChoices.length > 0 && !markChoices.includes(mark)) {
+      setMark(markChoices[0]!);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetDoc, markChoices.length]);
 
   const assign = () => {
     if (!current) return;
@@ -285,13 +310,21 @@ export const CropReturnPage = () => {
     setApplying(true);
     setError(null);
     try {
+      // Only the zones this document can actually place. A capture the operator
+      // made for a type the document lacks is dropped rather than sent to be
+      // matched against a zone that does not exist.
+      const only = (t: ZoneType) => (markChoices.includes(t) ? (regions[t] ?? null) : null);
       await submit.mutateAsync({
         sessionId,
         regions: {
-          signature: regions.signature ?? null,
-          stamp: regions.stamp ?? null,
-          mention: regions.mention ?? null,
-          signature_stamp: regions.signature_stamp ?? null,
+          signature: only('signature'),
+          stamp: only('stamp'),
+          mention: only('mention'),
+          signature_stamp: only('signature_stamp'),
+          date: only('date'),
+          quote_date: only('quote_date'),
+          free_text: only('free_text'),
+          checkbox: only('checkbox'),
           documentIds: [targetDoc],
         },
       });
@@ -345,9 +378,13 @@ export const CropReturnPage = () => {
   };
 
   const assigned = Object.keys(regions) as ZoneType[];
-  const canApply = Boolean(
-    (regions.signature || regions.signature_stamp) && targetDoc && sessionId,
-  );
+  /**
+   * Ready to apply once at least one captured zone matches a zone the target
+   * document actually has. Not "a signature specifically": a document whose
+   * template only asks for a date is satisfied by a date.
+   */
+  const usableAssigned = assigned.filter((m) => markChoices.includes(m));
+  const canApply = Boolean(usableAssigned.length > 0 && targetDoc && sessionId);
   const docName = (id: string) => contracts.find((d) => d.id === id)?.filename ?? id;
 
   if (!item) return <Spinner />;
@@ -448,22 +485,36 @@ export const CropReturnPage = () => {
             </Select>
 
             <div className="mt-3">
-              <Select
-                label="Cette zone est…"
-                value={mark}
-                onChange={(e) => {
-                  setMark(e.target.value as ZoneType);
-                  setCurrent(regions[e.target.value as ZoneType] ?? null);
-                  setResetToken((n) => n + 1);
-                }}
-              >
-                {markChoices.map((m) => (
-                  <option key={m} value={m}>
-                    {ZONE_TYPE_LABEL[m]}
-                    {regions[m] ? ' ✓' : ''}
-                  </option>
-                ))}
-              </Select>
+              {!targetDoc ? (
+                <p className="text-sm text-ink-400">
+                  Choisissez d’abord le document : les zones proposées seront celles configurées
+                  dessus.
+                </p>
+              ) : zonesLoading ? (
+                <p className="text-sm text-ink-400">Chargement des zones du document…</p>
+              ) : markChoices.length === 0 ? (
+                <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+                  Ce document n’a aucune zone configurée. Ouvrez-le dans « Documents à faire
+                  signer » pour y placer des zones avant de capturer.
+                </p>
+              ) : (
+                <Select
+                  label="Cette zone est…"
+                  value={mark}
+                  onChange={(e) => {
+                    setMark(e.target.value as ZoneType);
+                    setCurrent(regions[e.target.value as ZoneType] ?? null);
+                    setResetToken((n) => n + 1);
+                  }}
+                >
+                  {markChoices.map((m) => (
+                    <option key={m} value={m}>
+                      {ZONE_TYPE_LABEL[m]}
+                      {regions[m] ? ' ✓' : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </div>
 
             <Button className="mt-3 w-full" disabled={!current} onClick={assign}>
@@ -521,12 +572,12 @@ export const CropReturnPage = () => {
             >
               Détourer et apposer sur ce document
             </Button>
-            {!canApply && assigned.length > 0 && !targetDoc && (
+            {!canApply && !targetDoc && (
               <p className="mt-2 text-xs text-amber-700">Choisissez le document destinataire.</p>
             )}
-            {!canApply && !(regions.signature || regions.signature_stamp) && (
+            {!canApply && targetDoc && usableAssigned.length === 0 && (
               <p className="mt-2 text-xs text-ink-400">
-                Une signature est nécessaire — les autres marques sont facultatives.
+                Validez au moins une zone qui existe sur ce document.
               </p>
             )}
           </Card>

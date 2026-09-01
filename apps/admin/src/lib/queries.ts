@@ -510,3 +510,28 @@ export const useRequiredMarks = (folderId: string | undefined) =>
     queryFn: () => api<RequiredMarks>(`/folders/${folderId}/required-marks`),
     enabled: Boolean(folderId),
   });
+
+export interface DocumentZone {
+  page: number;
+  type: ZoneType;
+  rect: NormalizedRect;
+  index: number;
+}
+
+/**
+ * The zones actually configured on ONE document.
+ *
+ * Drives the crop screen's type menu: after the operator picks the target
+ * document, they should be offered exactly the marks that document's template
+ * describes — its signature, its "lu et approuvé", its date — not every mark
+ * type the folder happens to use somewhere.
+ */
+export const useDocumentZones = (documentId: string | undefined) =>
+  useQuery({
+    queryKey: ['document-zones', documentId],
+    queryFn: () =>
+      api<{ zones: DocumentZone[]; source: string; blockedReason: string | null }>(
+        `/documents/${documentId}/placement`,
+      ),
+    enabled: Boolean(documentId),
+  });
