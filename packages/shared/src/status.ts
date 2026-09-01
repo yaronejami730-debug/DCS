@@ -121,6 +121,22 @@ export const DOCUMENT_ROLE_LABEL: Record<DocumentRole, string> = {
   for_signing: 'Feuille de signature',
 };
 
+/**
+ * What the holder of a share link is doing right now, as their page reports
+ * it. Powers the console's presence dot — "they opened it", "they are
+ * printing", "they are sending the pages back".
+ */
+export const LINK_ACTIVITY_STEP = ['opened', 'viewing', 'printing', 'sending', 'sent'] as const;
+export type LinkActivityStep = (typeof LINK_ACTIVITY_STEP)[number];
+
+export const LINK_ACTIVITY_LABEL: Record<LinkActivityStep, string> = {
+  opened: 'consulte le lien',
+  viewing: 'lit un document',
+  printing: 'imprime / partage',
+  sending: 'envoie les pages signées',
+  sent: 'a renvoyé les pages',
+};
+
 export const SHARE_SCOPE = ['signer', 'operator'] as const;
 export type ShareScope = (typeof SHARE_SCOPE)[number];
 

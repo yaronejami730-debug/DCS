@@ -6,6 +6,7 @@ import {
   ZONE_TYPE_LABEL,
   marksToCapture,
   type NormalizedRect,
+  type SigningSession,
   type ZoneType,
 } from '@scansign/shared';
 import {
@@ -14,10 +15,9 @@ import {
   useReturns,
   useStartCropSession,
   useSubmitRegions,
-  useSession,
   useMarkReturnHandled,
 } from '../lib/queries';
-import { ApiRequestError } from '../lib/api';
+import { api, ApiRequestError } from '../lib/api';
 import { Page } from '../components/Layout';
 import { RegionSelector } from '../components/RegionSelector';
 import { CutoutPreview } from '../components/CutoutPreview';
@@ -26,19 +26,18 @@ import { Button, Card, Select, Spinner } from '../components/ui';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 /**
- * Crop the marks out of a page the technician sent back.
+ * Crop the marks out of a returned scan — one contract at a time.
  *
- * This is the step that used to happen on the phone and now belongs here, for a
- * simple reason: the technician signed on paper and has no idea which zone each
- * mark is destined for. The operator does — they configured the zones — and
- * they are sitting in front of a screen large enough to frame a signature
- * accurately, which a phone held at arm's length is not.
+ * The operator's sentence is "this signature goes on that document": they frame
+ * the marks meant for one contract, send them, and move to the next. Each pass
+ * runs the full existing pipeline — extraction, variants, stamping onto the
+ * zones that contract's template describes — but aimed at a single document via
+ * the submission's documentIds, instead of blanketing the folder.
  *
- * The pipeline underneath is unchanged. One page of the returned scan is
- * rasterised here, uploaded as a signing session's photo, and from that point
- * on it is the same extraction, the same variants and the same stamping the
- * capture flow always used. What changed is only where the photo comes from and
- * who draws the boxes.
+ * A signing session can only be submitted once, so each pass gets a fresh one:
+ * the rasterised page is kept as a blob and re-uploaded per pass. A few hundred
+ * kilobytes per contract is a fair price for never mutating a session that is
+ * already processing.
  */
 
 const TINT: Record<ZoneType, string> = {
@@ -89,6 +88,8 @@ const fetchImage = async (url: string): Promise<Blob> => {
   return res.blob();
 };
 
+type ServedState = 'processing' | 'completed' | 'error';
+
 export const CropReturnPage = () => {
   const { id: folderId = '', returnId = '' } = useParams<{ id: string; returnId: string }>();
   const [params] = useSearchParams();
@@ -102,28 +103,39 @@ export const CropReturnPage = () => {
   const markHandled = useMarkReturnHandled();
 
   const item = returns?.items.find((r) => r.id === returnId);
+  const contracts = (folder?.documents ?? []).filter((d) => d.role !== 'for_signing');
 
   const [page, setPage] = useState(Number(params.get('page') ?? 1) || 1);
+  const [pageBlob, setPageBlob] = useState<Blob | null>(null);
   const [photo, setPhoto] = useState<{ url: string; width: number; height: number } | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [targetDoc, setTargetDoc] = useState<string>('');
   const [mark, setMark] = useState<ZoneType>('signature');
   const [regions, setRegions] = useState<Partial<Record<ZoneType, NormalizedRect>>>({});
   const [current, setCurrent] = useState<NormalizedRect | null>(null);
   const [resetToken, setResetToken] = useState(0);
+  const [applying, setApplying] = useState(false);
+  /** documentId -> outcome, in the order they were served. */
+  const [served, setServed] = useState<Array<{ id: string; state: ServedState }>>([]);
 
-  const { data: session } = useSession(sessionId ?? undefined, submit.isSuccess);
   const preparedFor = useRef<string | null>(null);
 
+  // First unserved contract is the natural next target.
+  useEffect(() => {
+    if (targetDoc || contracts.length === 0) return;
+    const servedIds = new Set(served.map((s) => s.id));
+    const next = contracts.find((d) => !servedIds.has(d.id));
+    if (next) setTargetDoc(next.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contracts.length]);
+
   /**
-   * Prepare the page: rasterise it if it is a PDF, then open a session on it.
-   *
-   * Keyed on return + page so switching page re-prepares, and guarded by a ref
-   * so React's double-mount in development does not open two sessions on the
-   * same scan — the second would hold the photo and the first would get the
-   * regions.
+   * Prepare the page: rasterise it if it is a PDF, keep the blob, open the
+   * first session on it. Guarded by a ref so React's dev double-mount cannot
+   * open two sessions on the same scan.
    */
   useEffect(() => {
     if (!item?.url || !folderId) return;
@@ -144,14 +156,10 @@ export const CropReturnPage = () => {
             ? await rasterise(item.url!, page)
             : await fetchImage(item.url!);
         if (cancelled) return;
+        setPageBlob(blob);
 
-        const created = await startSession.mutateAsync({
-          folderId,
-          returnId: item.id,
-          page: blob,
-        });
+        const created = await startSession.mutateAsync({ folderId, returnId: item.id, page: blob });
         if (cancelled) return;
-
         setSessionId(created.session.id);
         if (created.photo) setPhoto(created.photo);
       } catch (e) {
@@ -159,7 +167,6 @@ export const CropReturnPage = () => {
           setError(
             e instanceof ApiRequestError ? e.message : "Cette page n'a pas pu être préparée.",
           );
-          // Let a retry re-run rather than sticking on the failed key.
           preparedFor.current = null;
         }
       } finally {
@@ -175,57 +182,100 @@ export const CropReturnPage = () => {
 
   const handleChange = useCallback((rect: NormalizedRect) => setCurrent(rect), []);
 
-  /**
-   * The marks worth offering: what this folder's templates actually describe.
-   *
-   * Asked of the server rather than inferred from the documents in hand — zones
-   * live on templates, and a document row says nothing about how many
-   * signatures its template wants.
-   */
   const markChoices: ZoneType[] = marksToCapture(requiredMarks ?? {});
 
   const assign = () => {
     if (!current) return;
     setRegions((prev) => ({ ...prev, [mark]: current }));
-    // Move to the next unassigned mark, so a three-mark page is three clicks
-    // rather than three trips through the dropdown.
     const next = markChoices.find((m) => m !== mark && !regions[m]);
     if (next) setMark(next);
     setCurrent(null);
     setResetToken((n) => n + 1);
   };
 
-  const send = () => {
-    if (!sessionId) return;
+  /**
+   * Send this pass's marks at the chosen contract, then open a fresh session
+   * for the next one.
+   *
+   * The submission response predates the inline processing's outcome, so the
+   * session is fetched again until it settles — which in production is usually
+   * the very first fetch, the work having run inside the request.
+   */
+  const apply = async () => {
+    if (!sessionId || !targetDoc) return;
+    setApplying(true);
     setError(null);
-    submit.mutate(
-      {
+    try {
+      await submit.mutateAsync({
         sessionId,
         regions: {
           signature: regions.signature ?? null,
           stamp: regions.stamp ?? null,
           mention: regions.mention ?? null,
           signature_stamp: regions.signature_stamp ?? null,
+          documentIds: [targetDoc],
         },
-      },
-      {
-        onSuccess: () => markHandled.mutate({ folderId, returnId }),
-        onError: (e) =>
-          setError(e instanceof ApiRequestError ? e.message : 'Envoi impossible.'),
-      },
-    );
+      });
+      setServed((prev) => [...prev, { id: targetDoc, state: 'processing' }]);
+      markHandled.mutate({ folderId, returnId });
+
+      const settledFor = targetDoc;
+      void (async () => {
+        for (let i = 0; i < 40; i++) {
+          try {
+            const s = await api<SigningSession>(`/signing-sessions/${sessionId}`);
+            if (s.status === 'completed' || s.status === 'error') {
+              setServed((prev) =>
+                prev.map((x) =>
+                  x.id === settledFor
+                    ? { ...x, state: s.status === 'completed' ? 'completed' : 'error' }
+                    : x,
+                ),
+              );
+              return;
+            }
+          } catch {
+            /* transient; keep polling */
+          }
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      })();
+
+      // Fresh session for the next contract, same page.
+      setRegions({});
+      setCurrent(null);
+      setResetToken((n) => n + 1);
+      setSessionId(null);
+      const servedIds = new Set([...served.map((s) => s.id), targetDoc]);
+      const nextDoc = contracts.find((d) => !servedIds.has(d.id));
+      setTargetDoc(nextDoc?.id ?? '');
+      if (pageBlob) {
+        const created = await startSession.mutateAsync({
+          folderId,
+          returnId,
+          page: pageBlob,
+        });
+        setSessionId(created.session.id);
+        if (created.photo) setPhoto(created.photo);
+      }
+    } catch (e) {
+      setError(e instanceof ApiRequestError ? e.message : 'Envoi impossible.');
+    } finally {
+      setApplying(false);
+    }
   };
 
   const assigned = Object.keys(regions) as ZoneType[];
-  const canSend = Boolean(regions.signature || regions.signature_stamp);
-  const done = session?.status === 'completed';
-  const failed = session?.status === 'error';
+  const canApply = Boolean(
+    (regions.signature || regions.signature_stamp) && targetDoc && sessionId,
+  );
+  const docName = (id: string) => contracts.find((d) => d.id === id)?.filename ?? id;
 
   if (!item) return <Spinner />;
 
   return (
     <Page
-      title="Recadrer les signatures"
+      title="Capturer les signatures"
       description={`${item.filename} · reçu pour ${folder?.name ?? 'ce dossier'}`}
       actions={
         <Button variant="secondary" onClick={() => navigate(`/folders/${folderId}`)}>
@@ -239,81 +289,70 @@ export const CropReturnPage = () => {
         </Card>
       )}
 
-      {submit.isSuccess && (
-        <Card className="mb-4 border-l-4 border-l-emerald-500 p-4">
-          <p className="text-sm font-medium text-emerald-800">
-            {done
-              ? 'Documents signés ✓'
-              : failed
-                ? 'Le traitement a échoué.'
-                : 'Traitement en cours…'}
-          </p>
-          <p className="mt-1 text-sm text-ink-600">
-            {done
-              ? 'Les marques ont été apposées sur les documents de ce dossier.'
-              : failed
-                ? (session?.errorMessage ?? 'Consultez le dossier pour le détail.')
-                : 'Les marques sont en cours d’application sur les documents.'}
-          </p>
-          {done && (
-            <Button className="mt-3" onClick={() => navigate(`/folders/${folderId}`)}>
-              Voir le dossier
-            </Button>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <Card className="p-4">
+          {preparing || !photo ? (
+            <div className="py-16">
+              <Spinner />
+              <p className="mt-2 text-center text-sm text-ink-400">Préparation de la page…</p>
+            </div>
+          ) : (
+            <>
+              {(item.pageCount ?? 1) > 1 && (
+                <div className="mb-3 flex items-center gap-3">
+                  <span className="text-sm text-ink-600">
+                    Page {page} sur {item.pageCount}
+                  </span>
+                  <div className="ml-auto flex gap-2">
+                    <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                      ‹ Précédente
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={page >= (item.pageCount ?? 1)}
+                      onClick={() => setPage(page + 1)}
+                    >
+                      Suivante ›
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <RegionSelector
+                key={`${mark}-${resetToken}-${page}`}
+                photoUrl={photo.url}
+                photoWidth={photo.width}
+                photoHeight={photo.height}
+                value={current}
+                onChange={handleChange}
+                tint={TINT[mark]}
+              />
+            </>
           )}
         </Card>
-      )}
 
-      {!submit.isSuccess && (
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="flex flex-col gap-4">
           <Card className="p-4">
-            {preparing || !photo ? (
-              <div className="py-16">
-                <Spinner />
-                <p className="mt-2 text-center text-sm text-ink-400">
-                  Préparation de la page…
-                </p>
-              </div>
-            ) : (
-              <>
-                {(item.pageCount ?? 1) > 1 && (
-                  <div className="mb-3 flex items-center gap-3">
-                    <span className="text-sm text-ink-600">
-                      Page {page} sur {item.pageCount}
-                    </span>
-                    <div className="ml-auto flex gap-2">
-                      <Button
-                        variant="secondary"
-                        disabled={page <= 1}
-                        onClick={() => setPage(page - 1)}
-                      >
-                        ‹ Précédente
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        disabled={page >= (item.pageCount ?? 1)}
-                        onClick={() => setPage(page + 1)}
-                      >
-                        Suivante ›
-                      </Button>
-                    </div>
-                  </div>
-                )}
+            {/*
+              The operator's sentence, as controls: THESE marks go on THAT
+              document. The document comes first because it is the decision;
+              the marks are the work.
+            */}
+            <Select
+              label="Pour quel document ?"
+              value={targetDoc}
+              onChange={(e) => setTargetDoc(e.target.value)}
+            >
+              <option value="">— choisir —</option>
+              {contracts.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {served.some((s) => s.id === d.id) ? '✓ ' : ''}
+                  {d.filename}
+                </option>
+              ))}
+            </Select>
 
-                <RegionSelector
-                  key={`${mark}-${resetToken}-${page}`}
-                  photoUrl={photo.url}
-                  photoWidth={photo.width}
-                  photoHeight={photo.height}
-                  value={current}
-                  onChange={handleChange}
-                  tint={TINT[mark]}
-                />
-              </>
-            )}
-          </Card>
-
-          <div className="flex flex-col gap-4">
-            <Card className="p-4">
+            <div className="mt-3">
               <Select
                 label="Cette zone est…"
                 value={mark}
@@ -330,70 +369,99 @@ export const CropReturnPage = () => {
                   </option>
                 ))}
               </Select>
+            </div>
 
-              <Button className="mt-3 w-full" disabled={!current} onClick={assign}>
-                Valider cette zone
-              </Button>
+            <Button className="mt-3 w-full" disabled={!current} onClick={assign}>
+              Valider cette zone
+            </Button>
 
-              <CutoutPreview
-                sessionId={sessionId}
-                mark={mark}
-                region={current}
-                enabled={Boolean(sessionId) && !preparing}
-              />
-            </Card>
+            <CutoutPreview
+              sessionId={sessionId}
+              mark={mark}
+              region={current}
+              enabled={Boolean(sessionId) && !preparing}
+            />
+          </Card>
 
+          <Card className="p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-ink-400">
+              Zones validées pour ce document
+            </p>
+            {assigned.length === 0 ? (
+              <p className="mt-2 text-sm text-ink-400">
+                Encadrez une marque dans le scan, dites ce qu’elle est, validez — puis choisissez
+                le document qui la reçoit.
+              </p>
+            ) : (
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {assigned.map((m) => (
+                  <li key={m} className="flex items-center gap-2 text-sm">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: TINT[m] }}
+                    />
+                    <span className="flex-1">{ZONE_TYPE_LABEL[m]}</span>
+                    <button
+                      onClick={() =>
+                        setRegions((prev) => {
+                          const next = { ...prev };
+                          delete next[m];
+                          return next;
+                        })
+                      }
+                      className="text-xs font-medium text-red-600 hover:underline"
+                    >
+                      Retirer
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <Button
+              className="mt-4 w-full"
+              disabled={!canApply}
+              loading={applying}
+              onClick={() => void apply()}
+            >
+              Détourer et apposer sur ce document
+            </Button>
+            {!canApply && assigned.length > 0 && !targetDoc && (
+              <p className="mt-2 text-xs text-amber-700">Choisissez le document destinataire.</p>
+            )}
+            {!canApply && !(regions.signature || regions.signature_stamp) && (
+              <p className="mt-2 text-xs text-ink-400">
+                Une signature est nécessaire — les autres marques sont facultatives.
+              </p>
+            )}
+          </Card>
+
+          {served.length > 0 && (
             <Card className="p-4">
               <p className="text-xs font-bold uppercase tracking-wide text-ink-400">
-                Zones validées
+                Documents servis
               </p>
-              {assigned.length === 0 ? (
-                <p className="mt-2 text-sm text-ink-400">
-                  Encadrez une marque dans le scan, choisissez ce qu’elle est, puis validez.
-                </p>
-              ) : (
-                <ul className="mt-2 flex flex-col gap-1.5">
-                  {assigned.map((m) => (
-                    <li key={m} className="flex items-center gap-2 text-sm">
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: TINT[m] }}
-                      />
-                      <span className="flex-1">{ZONE_TYPE_LABEL[m]}</span>
-                      <button
-                        onClick={() =>
-                          setRegions((prev) => {
-                            const next = { ...prev };
-                            delete next[m];
-                            return next;
-                          })
-                        }
-                        className="text-xs font-medium text-red-600 hover:underline"
-                      >
-                        Retirer
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {served.map((s) => (
+                  <li key={s.id} className="flex items-center gap-2 text-sm">
+                    <span className="shrink-0">
+                      {s.state === 'completed' ? '✅' : s.state === 'error' ? '❌' : '⏳'}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{docName(s.id)}</span>
+                  </li>
+                ))}
+              </ul>
               <Button
-                className="mt-4 w-full"
-                disabled={!canSend}
-                loading={submit.isPending}
-                onClick={send}
+                variant="secondary"
+                className="mt-3 w-full"
+                onClick={() => navigate(`/folders/${folderId}`)}
               >
-                Apposer sur les documents
+                Terminer — voir le dossier
               </Button>
-              {!canSend && (
-                <p className="mt-2 text-xs text-ink-400">
-                  Une signature est nécessaire — les autres marques sont facultatives.
-                </p>
-              )}
             </Card>
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </Page>
   );
 };

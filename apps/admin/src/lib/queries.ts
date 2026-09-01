@@ -179,6 +179,9 @@ export const useShareLinks = (folderId: string | undefined) =>
     queryKey: ['share-links', folderId],
     queryFn: () => api<Paginated<ShareLink>>(`/folders/${folderId}/share-links`),
     enabled: Boolean(folderId),
+    // Presence lives here: the green dot has to move while the operator
+    // watches, and 4s is the cadence the rest of the console already uses.
+    refetchInterval: 4000,
   });
 
 export const useCreateShareLink = () => {

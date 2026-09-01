@@ -16,12 +16,16 @@ export const SheetViewer = ({
   url,
   filename,
   onClose,
+  onPrint,
 }: {
   url: string;
   filename: string;
   onClose: () => void;
+  /** Fired when the print/share action is taken — presence reporting. */
+  onPrint?: () => void;
 }) => {
   const share = async () => {
+    onPrint?.();
     // The native share sheet reaches WhatsApp, mail, a nearby printer — the
     // channels this document actually travels by. Absent (desktop, old
     // browsers), the new-tab fallback covers printing.

@@ -560,6 +560,26 @@ sessionRoutes.post('/signing-sessions/:id/regions', async (c) => {
     .select('*')
     .single<SessionRow>();
 
+  /**
+   * A targeted submission must aim at documents of THIS session's folder —
+   * checked here, not trusted: the ids come from the client, and passing a
+   * stranger's document id through would stamp a signature onto it.
+   */
+  let onlyDocumentIds: string[] | undefined;
+  if (parsed.data.documentIds && parsed.data.documentIds.length > 0) {
+    const { data: owned } = await db
+      .from('documents')
+      .select('id')
+      .eq('folder_id', session.folder_id)
+      .eq('role', 'to_sign')
+      .in('id', parsed.data.documentIds)
+      .returns<Array<{ id: string }>>();
+    onlyDocumentIds = (owned ?? []).map((d) => d.id);
+    if (onlyDocumentIds.length === 0) {
+      throw badRequest('Aucun des documents visés n’appartient à ce dossier.');
+    }
+  }
+
   const run = () =>
     processSigningSession(session.id, {
       signature: parsed.data.signature,
@@ -567,6 +587,7 @@ sessionRoutes.post('/signing-sessions/:id/regions', async (c) => {
       mention: parsed.data.mention ?? null,
       signature_stamp: parsed.data.signature_stamp ?? null,
       assignments: parsed.data.assignments,
+      onlyDocumentIds,
     });
 
   /**

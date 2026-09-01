@@ -1,6 +1,7 @@
 import type {
   DocumentRole,
   DocumentStatus,
+  LinkActivityStep,
   ShareScope,
   ErrorCode,
   FolderStatus,
@@ -59,6 +60,9 @@ export interface ShareLink {
   revokedAt: string | null;
   lastOpenedAt: string | null;
   openedCount: number;
+  /** What the holder's page last reported doing, and when. Presence, not history. */
+  lastActivityAt: string | null;
+  lastActivityStep: LinkActivityStep | null;
   /** Derived: not revoked and not past its expiry. */
   active: boolean;
 }

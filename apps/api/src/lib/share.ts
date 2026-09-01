@@ -1,6 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
-import { SHARE_LINK_TTL_DAYS, type ShareLink, type ShareScope } from '@scansign/shared';
+import {
+  SHARE_LINK_TTL_DAYS,
+  type LinkActivityStep,
+  type ShareLink,
+  type ShareScope,
+} from '@scansign/shared';
 import { env } from '../env.js';
 import { db } from './supabase.js';
 import { forbidden, unauthorized } from './errors.js';
@@ -47,11 +52,13 @@ export interface ShareLinkRow {
   revoked_at: string | null;
   last_opened_at: string | null;
   opened_count: number;
+  last_activity_at: string | null;
+  last_activity_step: LinkActivityStep | null;
   created_at: string;
 }
 
 export const SHARE_LINK_SELECT =
-  'id, folder_id, owner_id, token, label, scope, require_location, expires_at, revoked_at, last_opened_at, opened_count, created_at';
+  'id, folder_id, owner_id, token, label, scope, require_location, expires_at, revoked_at, last_opened_at, opened_count, last_activity_at, last_activity_step, created_at';
 
 /**
  * 32 bytes of CSPRNG, base64url.
@@ -131,6 +138,8 @@ export const toShareLink = (row: ShareLinkRow, documentIds: string[] = []): Shar
   revokedAt: row.revoked_at,
   lastOpenedAt: row.last_opened_at,
   openedCount: row.opened_count,
+  lastActivityAt: row.last_activity_at ?? null,
+  lastActivityStep: row.last_activity_step ?? null,
   active: isActive(row),
 });
 
@@ -288,5 +297,23 @@ export const touchShareLink = async (linkId: string): Promise<void> => {
     await db.rpc('increment_share_link_open', { link_id: linkId });
   } catch {
     /* the operator loses a timestamp, the signer loses nothing */
+  }
+};
+
+/**
+ * The holder's page said what it is doing. Presence, not history: the last
+ * write wins, and best effort — a lost ping must never disturb the signing.
+ */
+export const recordLinkActivity = async (
+  linkId: string,
+  step: LinkActivityStep,
+): Promise<void> => {
+  try {
+    await db
+      .from('folder_share_links')
+      .update({ last_activity_at: new Date().toISOString(), last_activity_step: step })
+      .eq('id', linkId);
+  } catch {
+    /* presence is a nicety */
   }
 };

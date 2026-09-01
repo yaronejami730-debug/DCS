@@ -94,7 +94,7 @@ export const ReturnsPanel = ({ folderId }: { folderId: string }) => {
 
               <Link to={`/folders/${folderId}/reception/${item.id}`}>
                 <Button variant={item.handledAt ? 'secondary' : 'primary'}>
-                  Recadrer les signatures
+                  Capturer les signatures
                 </Button>
               </Link>
 
@@ -129,7 +129,7 @@ export const ReturnsPanel = ({ folderId }: { folderId: string }) => {
         actions={
           viewing && (
             <Link to={`/folders/${folderId}/reception/${viewing.id}`}>
-              <Button>Recadrer les signatures</Button>
+              <Button>Capturer les signatures</Button>
             </Link>
           )
         }

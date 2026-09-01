@@ -1,8 +1,9 @@
-import { Suspense, lazy, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ZONE_TYPE_LABEL } from '@scansign/shared';
 import { documentUrl, useSendSignedScan, useShareIntro } from '../lib/queries';
 import { requestLocation } from '../lib/geolocation';
+import { reportStep, startPresence } from '../lib/activity';
 
 /**
  * pdf.js only loads when a document is actually opened — it outweighs the rest
@@ -49,6 +50,12 @@ export const LandingPage = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
+
+  // The console's presence dot: heartbeat while this page is open.
+  useEffect(() => {
+    if (!data || data.done) return;
+    return startPresence();
+  }, [data]);
   /** The document open in the in-page viewer. */
   const [viewing, setViewing] = useState<{ url: string; filename: string } | null>(null);
 
@@ -68,6 +75,7 @@ export const LandingPage = () => {
       // page, and on some Androids it means a download prompt instead of a
       // view. Printing and sharing live inside the viewer.
       setViewing({ url, filename });
+      reportStep('viewing');
     } catch (e) {
       setUploadError(
         e instanceof ApiRequestError ? e.message : "Ce document n'a pas pu être ouvert.",
@@ -98,14 +106,17 @@ export const LandingPage = () => {
     let location = null as
       | { latitude: number; longitude: number; accuracy: number | null }
       | null;
+    reportStep('sending');
     const outcome = await requestLocation();
     if (outcome.status === 'coords') location = outcome.coords;
 
     send.mutate(
       { files: Array.from(files), location },
       {
-        onSuccess: (result) =>
-          setSent((prev) => [...prev, ...result.returned.map((r) => r.filename)]),
+        onSuccess: (result) => {
+          setSent((prev) => [...prev, ...result.returned.map((r) => r.filename)]);
+          reportStep('sent');
+        },
         onError: (e) =>
           setUploadError(e instanceof ApiRequestError ? e.message : 'Envoi impossible.'),
       },
@@ -276,6 +287,7 @@ export const LandingPage = () => {
           <SheetViewer
             url={viewing.url}
             filename={viewing.filename}
+            onPrint={() => reportStep('printing')}
             onClose={() => setViewing(null)}
           />
         </Suspense>

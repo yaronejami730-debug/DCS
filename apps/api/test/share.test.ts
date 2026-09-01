@@ -31,6 +31,8 @@ const row = (over: Partial<ShareLinkRow> = {}): ShareLinkRow => ({
   revoked_at: null,
   last_opened_at: null,
   opened_count: 0,
+  last_activity_at: null,
+  last_activity_step: null,
   created_at: new Date().toISOString(),
   ...over,
 });

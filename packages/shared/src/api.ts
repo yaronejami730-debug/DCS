@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CAPTURE_MODE, DOCUMENT_ROLE, SHARE_SCOPE, ZONE_TYPE } from './status.js';
+import { CAPTURE_MODE, DOCUMENT_ROLE, LINK_ACTIVITY_STEP, SHARE_SCOPE, ZONE_TYPE } from './status.js';
 import type { ZoneType } from './status.js';
 import type { NormalizedRect } from './geometry.js';
 
@@ -83,6 +83,12 @@ export type CreateShareLinkInput = z.infer<typeof createShareLinkSchema>;
  * rejected at the edge rather than stored as evidence. Accuracy is the browser's
  * own metres-of-uncertainty figure; it is advisory and may be absent.
  */
+/** The signer's page reporting what it is doing. */
+export const linkActivitySchema = z.object({
+  step: z.enum(LINK_ACTIVITY_STEP),
+});
+export type LinkActivityInput = z.infer<typeof linkActivitySchema>;
+
 export const geolocationSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
@@ -222,6 +228,15 @@ export const submitRegionsSchema = z
     mention: normalizedRectSchema.nullable().optional(),
     /** Optional — signature and stamp together, framed as a single mark. */
     signature_stamp: normalizedRectSchema.nullable().optional(),
+    /**
+     * Restrict this submission to these documents of the folder.
+     *
+     * The console crops a returned scan one document at a time — this
+     * signature goes on that contract, that one on the next — and without a
+     * target the pipeline stamps every document in the folder. Omitted or
+     * empty means all of them, which is what the phone-style flow wants.
+     */
+    documentIds: z.array(z.string().uuid()).max(50).optional(),
     /**
      * Which variant the signer chose for each document, per mark. Omitted
      * entirely when the signer did not assign any, in which case each document

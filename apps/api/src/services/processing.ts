@@ -59,6 +59,12 @@ export interface RegionSelection {
    * gets its own variant derived from its id.
    */
   assignments?: Partial<Record<ZoneType, Record<string, number>>>;
+  /**
+   * Stamp only these documents. The console's crop-a-return flow aims each
+   * submission at one contract; empty or absent keeps the historical
+   * behaviour — every document the session can reach.
+   */
+  onlyDocumentIds?: string[];
 }
 
 const failSession = async (
@@ -201,8 +207,11 @@ export const processSigningSession = async (
     .returns<DocumentRow[]>();
 
   const all = documents ?? [];
-  const docs =
-    scopedIds && scopedIds.size > 0 ? all.filter((d) => scopedIds.has(d.id)) : all;
+  let docs = scopedIds && scopedIds.size > 0 ? all.filter((d) => scopedIds.has(d.id)) : all;
+  if (regions.onlyDocumentIds && regions.onlyDocumentIds.length > 0) {
+    const chosen = new Set(regions.onlyDocumentIds);
+    docs = docs.filter((d) => chosen.has(d.id));
+  }
 
   if (docs.length === 0) {
     await failSession(

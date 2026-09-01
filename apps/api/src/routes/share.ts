@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import {
   createShareLinkSchema,
+  linkActivitySchema,
   marksToCapture,
   updateShareLinkSchema,
   type FolderStatus,
@@ -30,6 +31,7 @@ import {
 import {
   documentIdsForLink,
   linkDocumentIds,
+  recordLinkActivity,
   requireAuthOrShare,
   setLinkDocuments,
   type ShareBindings,
@@ -296,6 +298,7 @@ export const publicShareRoutes = new Hono();
 publicShareRoutes.get('/:token', async (c) => {
   const link = await resolveShareToken(c.req.param('token'));
   void touchShareLink(link.id);
+  void recordLinkActivity(link.id, 'opened');
 
   const { data: folder } = await db
     .from('folders')
@@ -654,5 +657,20 @@ shareRoutes.delete('/:id/returns/:returnId', async (c) => {
     metadata: { returnId: c.req.param('returnId') },
   });
 
+  return c.json({ ok: true });
+});
+
+/**
+ * The signer's page reporting its step — powers the console's presence dot.
+ *
+ * Fire-and-forget from the client and cheap here: one UPDATE of two columns on
+ * the link row. No response body worth having, no failure worth surfacing.
+ */
+shareUploadRoutes.post('/activity', async (c) => {
+  const share = c.get('share');
+  if (!share) throw forbidden('Cette route est réservée aux liens de signature.');
+  const parsed = linkActivitySchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) throw badRequest('Étape inconnue.');
+  await recordLinkActivity(share.linkId, parsed.data.step);
   return c.json({ ok: true });
 });

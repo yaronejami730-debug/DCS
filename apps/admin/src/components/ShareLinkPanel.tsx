@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Document, ShareLink } from '@scansign/shared';
+import { LINK_ACTIVITY_LABEL, type Document, type ShareLink } from '@scansign/shared';
 import {
   useCreateShareLink,
   useRevokeShareLink,
@@ -71,6 +71,9 @@ const copyText = async (text: string): Promise<boolean> => {
   }
 };
 
+/** Live within this window, or the dot goes grey. Two heartbeats of slack. */
+const PRESENCE_WINDOW_MS = 40_000;
+
 const LinkRow = ({
   link,
   folderId,
@@ -113,6 +116,32 @@ const LinkRow = ({
             📍 position
           </span>
         )}
+        {(() => {
+          /*
+            The presence dot. Green while the holder's page has heartbeat
+            within the window — with what they are doing — grey with a "last
+            seen" once it stops. Nothing shown before the first open: "jamais
+            ouvert" already says that.
+          */
+          if (!link.lastActivityAt) return null;
+          const live = Date.now() - new Date(link.lastActivityAt).getTime() < PRESENCE_WINDOW_MS;
+          const label = link.lastActivityStep
+            ? LINK_ACTIVITY_LABEL[link.lastActivityStep]
+            : 'en ligne';
+          return live ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              {label}
+            </span>
+          ) : (
+            <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-400">
+              vu {formatDate(link.lastActivityAt)}
+            </span>
+          );
+        })()}
         <span className="ml-auto text-xs text-ink-400">
           {link.openedCount > 0
             ? `Ouvert ${link.openedCount}× · dernier ${formatDate(link.lastOpenedAt)}`
