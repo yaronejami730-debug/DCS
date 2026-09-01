@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useFolder } from '../lib/queries';
 import { Page } from '../components/Layout';
@@ -105,6 +105,21 @@ export const AttestationPage = () => {
   );
 
   const [saved, setSaved] = useState(false);
+
+  // The preview PDF must fit its column, which is full-width on a phone and a
+  // half on desktop. Measured rather than a fixed 480, which was clipped on
+  // mobile.
+  const previewBox = useRef<HTMLDivElement>(null);
+  const [previewW, setPreviewW] = useState(480);
+  useLayoutEffect(() => {
+    const el = previewBox.current;
+    if (!el) return;
+    const measure = () => setPreviewW(Math.max(200, el.clientWidth - 24));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const useAsTemplate = async () => {
     setBusy(true);
     try {
@@ -139,18 +154,21 @@ export const AttestationPage = () => {
     >
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         {/* Aperçu vivant du PDF (gauche) */}
-        <div className="lg:sticky lg:top-4 lg:self-start">
-          <div className="max-h-[calc(100vh-150px)] overflow-y-auto rounded-xl bg-ink-100 p-3 ring-1 ring-ink-200/70">
+        <div className="order-2 lg:order-1 lg:sticky lg:top-4 lg:self-start">
+          <div
+            ref={previewBox}
+            className="max-h-[60vh] overflow-auto rounded-xl bg-ink-100 p-3 ring-1 ring-ink-200/70 lg:max-h-[calc(100vh-150px)]"
+          >
             {previewUrl ? (
-              <PdfViewer url={previewUrl} maxWidth={480} />
+              <PdfViewer url={previewUrl} maxWidth={previewW} />
             ) : (
               <p className="py-16 text-center text-sm text-ink-400">Préparation de l’aperçu…</p>
             )}
           </div>
         </div>
 
-        {/* Éditeur (droite) */}
-        <div className="space-y-5">
+        {/* Éditeur (droite sur desktop, en premier sur mobile) */}
+        <div className="order-1 space-y-5 lg:order-2">
         <Card className="p-5">
           <h2 className="mb-4 text-sm font-semibold">Le signataire</h2>
           <div className="space-y-3">
