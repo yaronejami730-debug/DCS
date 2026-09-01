@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useLayoutEffect } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -116,6 +116,26 @@ export const PdfViewer = ({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  /**
+   * Never draw wider than the space we are given.
+   *
+   * `maxWidth` is a ceiling, not a fixed size: in a narrow modal or a phone
+   * column a fixed width overflowed and clipped. The wrapper is measured and
+   * the effective page width is the smaller of the two, so the viewer fits
+   * everywhere without each caller computing a size.
+   */
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState(maxWidth);
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => setFit(Math.min(maxWidth, Math.max(160, el.clientWidth)));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [maxWidth]);
+
   useEffect(() => {
     let cancelled = false;
     let loadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
@@ -163,13 +183,13 @@ export const PdfViewer = ({
   }
 
   return (
-    <div className="flex flex-col items-center gap-6">
+    <div ref={wrapRef} className="flex w-full flex-col items-center gap-6">
       {Array.from({ length: pageCount }, (_, i) => i + 1).map((page) => (
         <PdfPage
           key={page}
           doc={doc}
           page={page}
-          maxWidth={maxWidth}
+          maxWidth={fit}
           onRendered={onRendered}
         >
           {renderOverlay}
