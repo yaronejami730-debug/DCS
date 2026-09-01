@@ -3,6 +3,7 @@ import type { DocumentRole } from '@scansign/shared';
 import { useUploadDocuments } from '../lib/queries';
 import { ApiRequestError } from '../lib/api';
 import { Button, Modal } from './ui';
+import { peekAttestationTemplate, takeAttestationTemplate } from '../lib/attestationTemplate';
 
 /**
  * Where does this PDF go?
@@ -36,14 +37,24 @@ export const ImportDialog = ({
   const [role, setRole] = useState<DocumentRole | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [templateName, setTemplateName] = useState<string | null>(null);
+
   // A dialog reopened after an import must not still be holding the last one.
   useEffect(() => {
     if (open) {
       setFiles([]);
       setRole(null);
       setError(null);
+      setTemplateName(peekAttestationTemplate()?.name ?? null);
     }
   }, [open]);
+
+  const addTemplate = () => {
+    const file = takeAttestationTemplate();
+    if (!file) return;
+    setFiles((prev) => [...prev, file]);
+    setTemplateName(null);
+  };
 
   const submit = () => {
     if (files.length === 0 || !role) return;
@@ -88,9 +99,16 @@ export const ImportDialog = ({
     <Modal open={open} title="Importer des PDF" onClose={onClose}>
       <div className="space-y-4">
         <div>
-          <Button variant="secondary" onClick={() => fileInput.current?.click()}>
-            Choisir des fichiers
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => fileInput.current?.click()}>
+              Choisir des fichiers
+            </Button>
+            {templateName && (
+              <Button variant="secondary" onClick={addTemplate}>
+                Utiliser l’attestation simplifiée
+              </Button>
+            )}
+          </div>
           <input
             ref={fileInput}
             type="file"

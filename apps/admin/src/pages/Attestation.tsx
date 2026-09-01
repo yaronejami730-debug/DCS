@@ -8,6 +8,7 @@ import {
   type AttestationDoc,
   type AttestationSigner,
 } from '../lib/attestationPdf';
+import { saveAttestationTemplate } from '../lib/attestationTemplate';
 
 const TYPES = ['Devis', 'Facture', "Attestation sur l'honneur", 'Mandat ou autorisation', 'Autre document'];
 
@@ -31,7 +32,7 @@ export const AttestationPage = () => {
     siren: '',
   });
   const [docs, setDocs] = useState<AttestationDoc[]>([
-    { type: 'Devis', concerned: '', showApproval: true, wantSignature: true, wantStamp: true },
+    { type: 'Devis', concerned: '', showApproval: true, wantSignature: true, wantStamp: true, combined: false },
   ]);
   const [newType, setNewType] = useState<string>(TYPES[0]!);
   const [busy, setBusy] = useState(false);
@@ -42,12 +43,15 @@ export const AttestationPage = () => {
   const seedFromFolder = () => {
     const seeded = (folder?.documents ?? [])
       .filter((d) => d.role !== 'for_signing')
-      .map<AttestationDoc>((d) => ({ type: 'Autre document', concerned: d.filename, showApproval: true, wantSignature: true, wantStamp: true }));
+      .map<AttestationDoc>((d) => ({ type: 'Autre document', concerned: d.filename, showApproval: true, wantSignature: true, wantStamp: true, combined: false }));
     if (seeded.length > 0) setDocs(seeded);
   };
 
   const setDoc = (i: number, patch: Partial<AttestationDoc>) =>
     setDocs((prev) => prev.map((d, j) => (j === i ? { ...d, ...patch } : d)));
+
+  const fileName = () =>
+    `attestation-${(signer.company || 'accord').replace(/\s+/g, '-').toLowerCase()}.pdf`;
 
   const generate = async () => {
     setBusy(true);
@@ -57,11 +61,24 @@ export const AttestationPage = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `attestation-${(signer.company || 'accord').replace(/\s+/g, '-').toLowerCase()}.pdf`;
+      a.download = fileName();
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const [saved, setSaved] = useState(false);
+  const useAsTemplate = async () => {
+    setBusy(true);
+    try {
+      const bytes = await generateAttestationPdf(signer, docs);
+      saveAttestationTemplate(fileName(), bytes);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 4000);
     } finally {
       setBusy(false);
     }
@@ -72,9 +89,19 @@ export const AttestationPage = () => {
       title="Attestation simplifiée"
       description="Renseignez le signataire et les documents, puis générez le PDF."
       actions={
-        <Button loading={busy} disabled={docs.length === 0} onClick={() => void generate()}>
-          Générer le PDF
-        </Button>
+        <>
+          <Button
+            variant="secondary"
+            loading={busy}
+            disabled={docs.length === 0}
+            onClick={() => void useAsTemplate()}
+          >
+            {saved ? 'Prêt à importer ✓' : 'Se servir de ce modèle'}
+          </Button>
+          <Button loading={busy} disabled={docs.length === 0} onClick={() => void generate()}>
+            Générer le PDF
+          </Button>
+        </>
       }
     >
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
@@ -197,6 +224,17 @@ export const AttestationPage = () => {
                     />
                     Cachet de la société
                   </label>
+                  {doc.wantSignature && doc.wantStamp && (
+                    <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-600">
+                      <input
+                        type="checkbox"
+                        checked={doc.combined}
+                        onChange={(e) => setDoc(i, { combined: e.target.checked })}
+                        className="h-3.5 w-3.5 rounded border-ink-300 accent-brand-600"
+                      />
+                      Ensemble
+                    </label>
+                  )}
                   <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-600">
                     <input
                       type="checkbox"
@@ -233,6 +271,7 @@ export const AttestationPage = () => {
                     showApproval: false,
                     wantSignature: true,
                     wantStamp: true,
+                    combined: false,
                   },
                 ]);
                 if (isOther) setEditing(docs.length);
@@ -295,6 +334,22 @@ export const AttestationPage = () => {
                     className="h-4 w-4 rounded border-ink-300 accent-brand-600"
                   />
                   Cachet de la société
+                </label>
+                <label
+                  className={`flex items-center gap-2 text-sm ${
+                    docs[editing]!.wantSignature && docs[editing]!.wantStamp
+                      ? 'cursor-pointer text-ink-700'
+                      : 'cursor-not-allowed text-ink-400'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    disabled={!(docs[editing]!.wantSignature && docs[editing]!.wantStamp)}
+                    checked={docs[editing]!.combined}
+                    onChange={(e) => setDoc(editing, { combined: e.target.checked })}
+                    className="h-4 w-4 rounded border-ink-300 accent-brand-600"
+                  />
+                  Signature et cachet ensemble (au même endroit)
                 </label>
                 <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-700">
                   <input

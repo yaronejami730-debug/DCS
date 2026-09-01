@@ -29,6 +29,8 @@ export interface AttestationDoc {
   /** What the signature box asks for. At least one must be true. */
   wantSignature: boolean;
   wantStamp: boolean;
+  /** Signature and stamp in one shared space, rather than two split zones. */
+  combined: boolean;
 }
 
 const A4 = { w: 595.28, h: 841.89 };
@@ -271,12 +273,16 @@ export const generateAttestationPdf = async (
     const sx = MARGIN + colW + gap;
     const wantSig = doc.wantSignature;
     const wantStamp = doc.wantStamp;
-    const both = wantSig && wantStamp;
-    const sigTitle = both
-      ? 'Signature manuscrite du dirigeant et cachet de la société'
-      : wantStamp
-        ? 'Cachet de la société'
-        : 'Signature manuscrite du dirigeant';
+    const combined = doc.combined && wantSig && wantStamp;
+    // 'both' drives the split-in-two layout; a combined mark stays one space.
+    const both = wantSig && wantStamp && !combined;
+    const sigTitle = combined
+      ? 'Signature manuscrite et cachet de la société (au même endroit)'
+      : wantSig && wantStamp
+        ? 'Signature manuscrite du dirigeant et cachet de la société'
+        : wantStamp
+          ? 'Cachet de la société'
+          : 'Signature manuscrite du dirigeant';
 
     page.drawRectangle({
       x: sx,
