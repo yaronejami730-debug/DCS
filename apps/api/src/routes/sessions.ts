@@ -71,6 +71,14 @@ interface SessionRow {
   signature_photo_path: string | null;
   stamp_photo_path: string | null;
   mention_photo_path: string | null;
+  date_photo_path?: string | null;
+  quote_date_photo_path?: string | null;
+  free_text_photo_path?: string | null;
+  checkbox_photo_path?: string | null;
+  date_image_path?: string | null;
+  quote_date_image_path?: string | null;
+  free_text_image_path?: string | null;
+  checkbox_image_path?: string | null;
   error_code: string | null;
   error_message: string | null;
   created_at: string;
@@ -89,6 +97,10 @@ const toModel = (row: SessionRow): SigningSession => ({
   stampImagePath: row.stamp_image_path,
   mentionImagePath: row.mention_image_path,
   signatureStampImagePath: row.signature_stamp_image_path,
+  dateImagePath: row.date_image_path ?? null,
+  quoteDateImagePath: row.quote_date_image_path ?? null,
+  freeTextImagePath: row.free_text_image_path ?? null,
+  checkboxImagePath: row.checkbox_image_path ?? null,
   errorCode: (row.error_code as SigningSession['errorCode']) ?? null,
   errorMessage: row.error_message,
   createdAt: row.created_at,
@@ -489,14 +501,17 @@ sessionRoutes.post('/signing-sessions/:id/preview-variants', async (c) => {
     );
   }
 
-  const path =
-    session.capture_mode === 'per_mark'
-      ? mark === 'signature'
-        ? session.signature_photo_path
-        : mark === 'mention'
-          ? session.mention_photo_path
-          : session.signature_stamp_photo_path
-      : session.photo_path;
+  const perMarkPath: Record<ZoneType, string | null | undefined> = {
+    signature: session.signature_photo_path,
+    stamp: session.stamp_photo_path,
+    mention: session.mention_photo_path,
+    signature_stamp: session.signature_stamp_photo_path,
+    date: session.date_photo_path,
+    quote_date: session.quote_date_photo_path,
+    free_text: session.free_text_photo_path,
+    checkbox: session.checkbox_photo_path,
+  };
+  const path = session.capture_mode === 'per_mark' ? perMarkPath[mark] : session.photo_path;
   if (!path) throw badRequest('Aucune photo pour cette marque.', 'IMAGE_PROCESSING_FAILED');
 
   const photo = await downloadObject(path);
@@ -556,6 +571,10 @@ sessionRoutes.post('/signing-sessions/:id/regions', async (c) => {
       stamp: session.stamp_photo_path,
       mention: session.mention_photo_path,
       signature_stamp: session.signature_stamp_photo_path,
+      date: session.date_photo_path ?? null,
+      quote_date: session.quote_date_photo_path ?? null,
+      free_text: session.free_text_photo_path ?? null,
+      checkbox: session.checkbox_photo_path ?? null,
     };
     const missing = ZONE_TYPE.filter(
       (mark) => parsed.data[mark as keyof typeof parsed.data] && !photoFor[mark],
@@ -602,6 +621,10 @@ sessionRoutes.post('/signing-sessions/:id/regions', async (c) => {
       stamp: parsed.data.stamp ?? null,
       mention: parsed.data.mention ?? null,
       signature_stamp: parsed.data.signature_stamp ?? null,
+      date: parsed.data.date ?? null,
+      quote_date: parsed.data.quote_date ?? null,
+      free_text: parsed.data.free_text ?? null,
+      checkbox: parsed.data.checkbox ?? null,
       assignments: parsed.data.assignments,
       onlyDocumentIds,
     });

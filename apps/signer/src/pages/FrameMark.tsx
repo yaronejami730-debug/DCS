@@ -12,6 +12,10 @@ const TINT: Record<ZoneType, string> = {
   stamp: '#0f9d58',
   mention: '#b7791f',
   signature_stamp: '#8b3fbf',
+  date: '#c02a55',
+  quote_date: '#d96b16',
+  free_text: '#2a8a96',
+  checkbox: '#5a6472',
 };
 
 /**

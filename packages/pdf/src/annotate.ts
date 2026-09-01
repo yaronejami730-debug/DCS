@@ -26,6 +26,10 @@ const TONE: Record<ZoneType, { r: number; g: number; b: number; label: string }>
   stamp: { r: 0.06, g: 0.61, b: 0.35, label: 'TAMPON' },
   mention: { r: 0.72, g: 0.36, b: 0.05, label: 'LU ET APPROUVÉ' },
   signature_stamp: { r: 0.55, g: 0.24, b: 0.72, label: 'TAMPON + SIGNATURE' },
+  date: { r: 0.75, g: 0.16, b: 0.35, label: 'DATE' },
+  quote_date: { r: 0.85, g: 0.42, b: 0.1, label: 'DATE DE DEVIS' },
+  free_text: { r: 0.25, g: 0.55, b: 0.6, label: 'TEXTE' },
+  checkbox: { r: 0.35, g: 0.35, b: 0.4, label: 'CASE' },
 };
 
 /**

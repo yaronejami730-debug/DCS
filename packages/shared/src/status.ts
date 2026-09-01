@@ -36,7 +36,16 @@ export type SessionStatus = (typeof SESSION_STATUS)[number];
  * `mention` is the "Lu et approuvé" a contract often requires beside the
  * signature — a separate mark with its own zone, cutout and placement.
  */
-export const ZONE_TYPE = ['signature', 'stamp', 'mention', 'signature_stamp'] as const;
+export const ZONE_TYPE = [
+  'signature',
+  'stamp',
+  'mention',
+  'signature_stamp',
+  'date',
+  'quote_date',
+  'free_text',
+  'checkbox',
+] as const;
 export type ZoneType = (typeof ZONE_TYPE)[number];
 
 export const ZONE_TYPE_LABEL: Record<ZoneType, string> = {
@@ -44,6 +53,10 @@ export const ZONE_TYPE_LABEL: Record<ZoneType, string> = {
   stamp: 'Tampon',
   mention: 'Lu et approuvé',
   signature_stamp: 'Tampon + signature',
+  date: 'Date',
+  quote_date: 'Date de devis',
+  free_text: 'Texte',
+  checkbox: 'Case cochée',
 };
 
 /** What the signer is asked to produce, shown as guidance during capture. */
@@ -53,6 +66,10 @@ export const ZONE_TYPE_INSTRUCTION: Record<ZoneType, string> = {
   mention: 'Écrivez « Lu et approuvé » sur une feuille blanche.',
   signature_stamp:
     'Signez puis apposez votre tampon par-dessus, comme sur un document réel.',
+  date: 'Écrivez la date du jour sur une feuille blanche.',
+  quote_date: 'Écrivez la date du devis sur une feuille blanche.',
+  free_text: 'Écrivez le texte demandé sur une feuille blanche.',
+  checkbox: 'Tracez une croix ou une coche sur une feuille blanche.',
 };
 
 /**
@@ -60,7 +77,15 @@ export const ZONE_TYPE_INSTRUCTION: Record<ZoneType, string> = {
  * documents. A stamp is a physical die and reproduces identically every
  * time — varying it would look wrong, not natural.
  */
-export const HANDWRITTEN_MARKS: readonly ZoneType[] = ['signature', 'mention', 'signature_stamp'];
+export const HANDWRITTEN_MARKS: readonly ZoneType[] = [
+  'signature',
+  'mention',
+  'signature_stamp',
+  'date',
+  'quote_date',
+  'free_text',
+  'checkbox',
+];
 
 /**
  * The order marks are captured in: the signature first, always, then the
@@ -76,6 +101,10 @@ export const CAPTURE_ORDER: readonly ZoneType[] = [
   'signature_stamp',
   'stamp',
   'mention',
+  'date',
+  'quote_date',
+  'free_text',
+  'checkbox',
 ];
 
 /** Fails the build if a new mark is added without giving it a capture position. */
@@ -156,6 +185,7 @@ export const ERROR_CODE = [
   'STAMP_EXTRACTION_FAILED',
   'MENTION_EXTRACTION_FAILED',
   'COMBINED_EXTRACTION_FAILED',
+  'MARK_EXTRACTION_FAILED',
   'PDF_GENERATION_FAILED',
   'STORAGE_FAILED',
   'NOTIFICATION_FAILED',
@@ -193,6 +223,7 @@ export const ERROR_CODE_LABEL: Record<ErrorCode, string> = {
   STAMP_EXTRACTION_FAILED: 'Échec du détourage du tampon',
   MENTION_EXTRACTION_FAILED: 'Échec du détourage de la mention',
   COMBINED_EXTRACTION_FAILED: 'Échec du détourage du tampon signé',
+  MARK_EXTRACTION_FAILED: 'Échec du détourage de la marque',
   PDF_GENERATION_FAILED: 'Échec de la génération du PDF',
   STORAGE_FAILED: 'Échec du stockage',
   NOTIFICATION_FAILED: "Échec de l'envoi de la notification",

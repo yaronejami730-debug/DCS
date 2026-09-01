@@ -1,5 +1,7 @@
 import { Hono, type Context } from 'hono';
-import { adjustPlacementSchema, assignTemplateSchema } from '@scansign/shared';
+import { adjustPlacementSchema, assignTemplateSchema
+  ZONE_TYPE,
+} from '@scansign/shared';
 import { annotateTemplate } from '@scansign/pdf';
 import { ZONE_TYPE_LABEL, previewPdfPath, type ZoneType } from '@scansign/shared';
 import { db } from '../lib/supabase.js';
@@ -151,12 +153,10 @@ documentRoutes.get('/:id/preview-url', async (c) => {
   // at any moment, and showing a signer a stale preview of where their
   // signature will go would be worse than showing none.
   const original = await downloadObject(doc.storage_path);
-  const counters: Record<ZoneType, number> = {
-    signature: 0,
-    stamp: 0,
-    mention: 0,
-    signature_stamp: 0,
-  };
+  // Seeded from the list itself, so a type added later cannot be missed here.
+  const counters: Record<ZoneType, number> = Object.fromEntries(
+    ZONE_TYPE.map((t) => [t, 0]),
+  ) as Record<ZoneType, number>;
   const annotated = await annotateTemplate({
     pdfBytes: original,
     zones: zones.map((zone) => {

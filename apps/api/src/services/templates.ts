@@ -1,3 +1,4 @@
+import { ZONE_TYPE } from '@scansign/shared';
 import type { NormalizedRect, RequiredMarks, TemplateZone, ZoneType } from '@scansign/shared';
 import { matchesFilenamePattern } from '@scansign/pdf';
 import { db } from '../lib/supabase.js';
@@ -131,7 +132,10 @@ export const requiredMarksForFolder = async (folderId: string): Promise<Required
     .eq('role', 'to_sign')
     .returns<Array<{ template_id: string | null }>>();
 
-  const counts: RequiredMarks = { signature: 0, stamp: 0, mention: 0, signature_stamp: 0 };
+  // Seeded from the list itself, so a type added later cannot be missed here.
+  const counts: RequiredMarks = Object.fromEntries(
+    ZONE_TYPE.map((t) => [t, 0]),
+  ) as RequiredMarks;
   const seen = new Set<string>();
 
   for (const doc of documents ?? []) {

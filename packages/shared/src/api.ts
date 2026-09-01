@@ -228,6 +228,11 @@ export const submitRegionsSchema = z
     mention: normalizedRectSchema.nullable().optional(),
     /** Optional — signature and stamp together, framed as a single mark. */
     signature_stamp: normalizedRectSchema.nullable().optional(),
+    /** Handwritten extras: each cropped and matched to zones of its own type. */
+    date: normalizedRectSchema.nullable().optional(),
+    quote_date: normalizedRectSchema.nullable().optional(),
+    free_text: normalizedRectSchema.nullable().optional(),
+    checkbox: normalizedRectSchema.nullable().optional(),
     /**
      * Restrict this submission to these documents of the folder.
      *

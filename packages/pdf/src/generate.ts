@@ -30,6 +30,11 @@ export interface GenerateSignedPdfInput {
   mentionPng?: Uint8Array | null;
   /** Signature and stamp captured together as one mark. */
   combinedPng?: Uint8Array | null;
+  /** Extended handwritten marks, keyed like their zones. */
+  datePng?: Uint8Array | null;
+  quoteDatePng?: Uint8Array | null;
+  freeTextPng?: Uint8Array | null;
+  checkboxPng?: Uint8Array | null;
   /**
    * How marks are scaled into their zones. Defaults to DEFAULT_MARK_FIT, which
    * lets the zone's width lead — see fitMarkInZone.
@@ -105,6 +110,10 @@ export const generateSignedPdf = async (
     ['stamp', input.stampPng, 'STAMP_EXTRACTION_FAILED', 'un tampon'],
     ['mention', input.mentionPng, 'MENTION_EXTRACTION_FAILED', 'la mention « Lu et approuvé »'],
     ['signature_stamp', input.combinedPng, 'COMBINED_EXTRACTION_FAILED', 'un tampon signé'],
+    ['date', input.datePng, 'MARK_EXTRACTION_FAILED', 'une date'],
+    ['quote_date', input.quoteDatePng, 'MARK_EXTRACTION_FAILED', 'une date de devis'],
+    ['free_text', input.freeTextPng, 'MARK_EXTRACTION_FAILED', 'un texte'],
+    ['checkbox', input.checkboxPng, 'MARK_EXTRACTION_FAILED', 'une case cochée'],
   ];
   for (const [type, bytes, code, label] of required) {
     if (zones.some((z) => z.type === type) && !bytes?.length) {
@@ -120,6 +129,10 @@ export const generateSignedPdf = async (
     stamp: input.stampPng?.length ? await doc.embedPng(input.stampPng) : null,
     mention: input.mentionPng?.length ? await doc.embedPng(input.mentionPng) : null,
     signature_stamp: input.combinedPng?.length ? await doc.embedPng(input.combinedPng) : null,
+    date: input.datePng?.length ? await doc.embedPng(input.datePng) : null,
+    quote_date: input.quoteDatePng?.length ? await doc.embedPng(input.quoteDatePng) : null,
+    free_text: input.freeTextPng?.length ? await doc.embedPng(input.freeTextPng) : null,
+    checkbox: input.checkboxPng?.length ? await doc.embedPng(input.checkboxPng) : null,
   };
 
   let placed = 0;

@@ -56,6 +56,15 @@ export const mentionCutoutPath = (ownerId: string, sessionId: string): string =>
 export const combinedCutoutPath = (ownerId: string, sessionId: string): string =>
   `${STORAGE_PREFIX.signatures}/${ownerId}/${sessionId}-combined.png`;
 
+/**
+ * Cutout of one of the extended handwritten marks (date, quote date, free
+ * text, checkbox). The legacy marks keep their historical prefixes; giving
+ * each new type its own bucket prefix would multiply retention rules for no
+ * benefit.
+ */
+export const markCutoutPath = (ownerId: string, sessionId: string, mark: ZoneType): string =>
+  `${STORAGE_PREFIX.signatures}/${ownerId}/${sessionId}-${mark}.png`;
+
 /** Per-mark capture stores one photo per mark instead of a single shared sheet. */
 export const markPhotoPath = (
   ownerId: string,

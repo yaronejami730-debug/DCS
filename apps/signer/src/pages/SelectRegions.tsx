@@ -25,6 +25,10 @@ const DEFAULT_RECT: Record<ZoneType, NormalizedRect> = {
   stamp: { x: 0.52, y: 0.44, width: 0.38, height: 0.36 },
   mention: { x: 0.08, y: 0.46, width: 0.5, height: 0.2 },
   signature_stamp: { x: 0.1, y: 0.16, width: 0.7, height: 0.5 },
+  date: { x: 0.08, y: 0.7, width: 0.34, height: 0.14 },
+  quote_date: { x: 0.55, y: 0.7, width: 0.34, height: 0.14 },
+  free_text: { x: 0.08, y: 0.46, width: 0.6, height: 0.2 },
+  checkbox: { x: 0.08, y: 0.08, width: 0.16, height: 0.14 },
 };
 
 const TINT: Record<ZoneType, string> = {
@@ -32,6 +36,10 @@ const TINT: Record<ZoneType, string> = {
   stamp: '#0f9d58',
   mention: '#b7791f',
   signature_stamp: '#8b3fbf',
+  date: '#c02a55',
+  quote_date: '#d96b16',
+  free_text: '#2a8a96',
+  checkbox: '#5a6472',
 };
 
 const FRAMING_HINT: Record<ZoneType, string> = {
@@ -39,6 +47,10 @@ const FRAMING_HINT: Record<ZoneType, string> = {
   stamp: 'Ajustez le cadre autour de votre tampon.',
   signature_stamp: 'Encadrez le tampon et la signature ensemble.',
   mention: 'Ajustez le cadre autour de la mention « Lu et approuvé ».',
+  date: 'Ajustez le cadre autour de la date.',
+  quote_date: 'Ajustez le cadre autour de la date de devis.',
+  free_text: 'Ajustez le cadre autour du texte.',
+  checkbox: 'Ajustez le cadre autour de la case cochée.',
 };
 
 interface CaptureState {

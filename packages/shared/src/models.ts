@@ -184,6 +184,10 @@ export interface SigningSession {
   stampImagePath: string | null;
   mentionImagePath: string | null;
   signatureStampImagePath: string | null;
+  dateImagePath?: string | null;
+  quoteDateImagePath?: string | null;
+  freeTextImagePath?: string | null;
+  checkboxImagePath?: string | null;
   errorCode: ErrorCode | null;
   errorMessage: string | null;
   createdAt: string;

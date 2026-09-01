@@ -2,11 +2,14 @@ import {
   combinedCutoutPath,
   HANDWRITTEN_MARKS,
   mentionCutoutPath,
+  markCutoutPath,
   signatureCutoutPath,
   stampCutoutPath,
   processedPdfPath,
   type ErrorCode,
   type ZoneType,
+  ZONE_TYPE,
+  ZONE_TYPE_LABEL,
 } from '@scansign/shared';
 import { generateSignedPdf, PdfPipelineError, type PlacementZone } from '@scansign/pdf';
 import { env } from '../env.js';
@@ -35,6 +38,10 @@ interface SessionRow {
   stamp_photo_path: string | null;
   mention_photo_path: string | null;
   signature_stamp_photo_path: string | null;
+  date_photo_path?: string | null;
+  quote_date_photo_path?: string | null;
+  free_text_photo_path?: string | null;
+  checkbox_photo_path?: string | null;
 }
 
 interface DocumentRow {
@@ -53,6 +60,11 @@ export interface RegionSelection {
   mention?: Rect | null;
   /** Signature and stamp framed together as one mark. */
   signature_stamp?: Rect | null;
+  /** Extended handwritten marks — same pipeline as mention. */
+  date?: Rect | null;
+  quote_date?: Rect | null;
+  free_text?: Rect | null;
+  checkbox?: Rect | null;
   /**
    * Which variant of each handwritten mark the signer chose for each document.
    * Absent when they did not assign any, in which case each document still
@@ -113,7 +125,7 @@ export const processSigningSession = async (
   const { data: session } = await db
     .from('signing_sessions')
     .select(
-      'id, folder_id, owner_id, share_link_id, capture_mode, photo_path, photo_width, photo_height, signature_photo_path, stamp_photo_path, mention_photo_path, signature_stamp_photo_path',
+      'id, folder_id, owner_id, share_link_id, capture_mode, photo_path, photo_width, photo_height, signature_photo_path, stamp_photo_path, mention_photo_path, signature_stamp_photo_path, date_photo_path, quote_date_photo_path, free_text_photo_path, checkbox_photo_path',
     )
     .eq('id', sessionId)
     .maybeSingle<SessionRow>();
@@ -145,6 +157,10 @@ export const processSigningSession = async (
     session.stamp_photo_path,
     session.mention_photo_path,
     session.signature_stamp_photo_path,
+    session.date_photo_path,
+    session.quote_date_photo_path,
+    session.free_text_photo_path,
+    session.checkbox_photo_path,
   ].filter(Boolean);
   if (perMark && capturedMarks.length === 0) {
     await failSession(
@@ -228,12 +244,10 @@ export const processSigningSession = async (
 
   // Work out what the templates actually require before touching the photo.
   const zonesByDocument = new Map<string, PlacementZone[]>();
-  const needs: Record<ZoneType, boolean> = {
-    signature: false,
-    stamp: false,
-    mention: false,
-    signature_stamp: false,
-  };
+  // Seeded from the list itself, so a type added later cannot be missed here.
+  const needs: Record<ZoneType, boolean> = Object.fromEntries(
+    ZONE_TYPE.map((t) => [t, false]),
+  ) as Record<ZoneType, boolean>;
   for (const doc of docs) {
     // A document an operator has repositioned keeps its own geometry when the
     // folder is signed again. Falling back to the template here would silently
@@ -302,6 +316,18 @@ export const processSigningSession = async (
     );
     return;
   }
+  for (const extra of ['date', 'quote_date', 'free_text', 'checkbox'] as const) {
+    if (needs[extra] && !regions[extra]) {
+      await failSession(
+        sessionId,
+        folderId,
+        ownerId,
+        'MARK_EXTRACTION_FAILED',
+        `Ce dossier attend « ${ZONE_TYPE_LABEL[extra]} » mais aucune zone n’a été sélectionnée.`,
+      );
+      return;
+    }
+  }
 
   const provider = createExtractionProvider();
   const cutouts: Partial<Record<ZoneType, Uint8Array>> = {};
@@ -317,15 +343,17 @@ export const processSigningSession = async (
   const photoFor = async (
     mark: ZoneType,
   ): Promise<{ bytes: Uint8Array; width: number; height: number } | null> => {
-    const path = perMark
-      ? mark === 'signature'
-        ? session.signature_photo_path
-        : mark === 'stamp'
-          ? session.stamp_photo_path
-          : mark === 'mention'
-            ? session.mention_photo_path
-            : session.signature_stamp_photo_path
-      : session.photo_path;
+    const perMarkPath: Record<ZoneType, string | null | undefined> = {
+      signature: session.signature_photo_path,
+      stamp: session.stamp_photo_path,
+      mention: session.mention_photo_path,
+      signature_stamp: session.signature_stamp_photo_path,
+      date: session.date_photo_path,
+      quote_date: session.quote_date_photo_path,
+      free_text: session.free_text_photo_path,
+      checkbox: session.checkbox_photo_path,
+    };
+    const path = perMark ? perMarkPath[mark] : session.photo_path;
     if (!path) return null;
     const bytes = await downloadObject(path);
     if (!perMark) {
@@ -340,6 +368,10 @@ export const processSigningSession = async (
     stamp: 'STAMP_EXTRACTION_FAILED',
     mention: 'MENTION_EXTRACTION_FAILED',
     signature_stamp: 'COMBINED_EXTRACTION_FAILED',
+    date: 'MARK_EXTRACTION_FAILED',
+    quote_date: 'MARK_EXTRACTION_FAILED',
+    free_text: 'MARK_EXTRACTION_FAILED',
+    checkbox: 'MARK_EXTRACTION_FAILED',
   };
 
   try {
@@ -348,6 +380,10 @@ export const processSigningSession = async (
       ['stamp', regions.stamp],
       ['mention', regions.mention],
       ['signature_stamp', regions.signature_stamp],
+      ['date', regions.date],
+      ['quote_date', regions.quote_date],
+      ['free_text', regions.free_text],
+      ['checkbox', regions.checkbox],
     ];
 
     for (const [mark, region] of wanted) {
@@ -398,16 +434,28 @@ export const processSigningSession = async (
   const stampPng = cutouts.stamp ?? null;
   const mentionPng = cutouts.mention ?? null;
   const combinedPng = cutouts.signature_stamp ?? null;
+  const datePng = cutouts.date ?? null;
+  const quoteDatePng = cutouts.quote_date ?? null;
+  const freeTextPng = cutouts.free_text ?? null;
+  const checkboxPng = cutouts.checkbox ?? null;
 
   const signaturePath = signaturePng ? signatureCutoutPath(ownerId, sessionId) : null;
   const stampPath = stampPng ? stampCutoutPath(ownerId, sessionId) : null;
   const mentionPath = mentionPng ? mentionCutoutPath(ownerId, sessionId) : null;
   const combinedPath = combinedPng ? combinedCutoutPath(ownerId, sessionId) : null;
+  const datePath = datePng ? markCutoutPath(ownerId, sessionId, 'date') : null;
+  const quoteDatePath = quoteDatePng ? markCutoutPath(ownerId, sessionId, 'quote_date') : null;
+  const freeTextPath = freeTextPng ? markCutoutPath(ownerId, sessionId, 'free_text') : null;
+  const checkboxPath = checkboxPng ? markCutoutPath(ownerId, sessionId, 'checkbox') : null;
 
   if (signaturePng && signaturePath) await uploadObject(signaturePath, signaturePng, 'image/png');
   if (stampPng && stampPath) await uploadObject(stampPath, stampPng, 'image/png');
   if (mentionPng && mentionPath) await uploadObject(mentionPath, mentionPng, 'image/png');
   if (combinedPng && combinedPath) await uploadObject(combinedPath, combinedPng, 'image/png');
+  if (datePng && datePath) await uploadObject(datePath, datePng, 'image/png');
+  if (quoteDatePng && quoteDatePath) await uploadObject(quoteDatePath, quoteDatePng, 'image/png');
+  if (freeTextPng && freeTextPath) await uploadObject(freeTextPath, freeTextPng, 'image/png');
+  if (checkboxPng && checkboxPath) await uploadObject(checkboxPath, checkboxPng, 'image/png');
 
   await db
     .from('signing_sessions')
@@ -416,6 +464,10 @@ export const processSigningSession = async (
       stamp_image_path: stampPath,
       mention_image_path: mentionPath,
       signature_stamp_image_path: combinedPath,
+      date_image_path: datePath,
+      quote_date_image_path: quoteDatePath,
+      free_text_image_path: freeTextPath,
+      checkbox_image_path: checkboxPath,
     })
     .eq('id', sessionId);
 
@@ -494,6 +546,10 @@ export const processSigningSession = async (
         stampPng,
         mentionPng: await varied(mentionPng, 'mention'),
         combinedPng: await varied(combinedPng, 'signature_stamp'),
+        datePng: await varied(datePng, 'date'),
+        quoteDatePng: await varied(quoteDatePng, 'quote_date'),
+        freeTextPng: await varied(freeTextPng, 'free_text'),
+        checkboxPng: await varied(checkboxPng, 'checkbox'),
               fit: { fill: env.MARK_FILL, maxHeightOverflow: env.MARK_MAX_OVERFLOW },
         // Size, position and tilt for THIS signing. Applied at placement, where
         // nothing normalises it away — see variantPlacement.
@@ -629,6 +685,10 @@ export const processSigningSession = async (
       session.stamp_photo_path,
       session.mention_photo_path,
       session.signature_stamp_photo_path,
+      session.date_photo_path,
+      session.quote_date_photo_path,
+      session.free_text_photo_path,
+      session.checkbox_photo_path,
     ].filter((p): p is string => Boolean(p));
     if (photos.length > 0) {
       await removeObjects(photos);
@@ -640,13 +700,26 @@ export const processSigningSession = async (
           stamp_photo_path: null,
           mention_photo_path: null,
           signature_stamp_photo_path: null,
+          date_photo_path: null,
+          quote_date_photo_path: null,
+          free_text_photo_path: null,
+          checkbox_photo_path: null,
         })
         .eq('id', sessionId);
     }
   }
   if (allGood && !env.RETENTION_KEEP_CUTOUTS) {
     await removeObjects(
-      [signaturePath, stampPath, mentionPath, combinedPath].filter((p): p is string => Boolean(p)),
+      [
+        signaturePath,
+        stampPath,
+        mentionPath,
+        combinedPath,
+        datePath,
+        quoteDatePath,
+        freeTextPath,
+        checkboxPath,
+      ].filter((p): p is string => Boolean(p)),
     );
     await db
       .from('signing_sessions')
@@ -655,6 +728,10 @@ export const processSigningSession = async (
         stamp_image_path: null,
         mention_image_path: null,
         signature_stamp_image_path: null,
+        date_image_path: null,
+        quote_date_image_path: null,
+        free_text_image_path: null,
+        checkbox_image_path: null,
       })
       .eq('id', sessionId);
   }

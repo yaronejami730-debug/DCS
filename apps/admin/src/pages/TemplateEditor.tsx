@@ -159,7 +159,9 @@ export const TemplateEditorPage = () => {
     () =>
       ZONE_TYPE.reduce<Record<ZoneType, number>>(
         (acc, type) => ({ ...acc, [type]: zones.filter((z) => z.type === type).length }),
-        { signature: 0, stamp: 0, mention: 0, signature_stamp: 0 },
+        // Seeded from the list itself: a hand-written literal silently missed
+        // every type added later.
+        Object.fromEntries(ZONE_TYPE.map((t) => [t, 0])) as Record<ZoneType, number>,
       ),
     [zones],
   );
@@ -332,8 +334,9 @@ export const TemplateEditorPage = () => {
             <div className="flex items-center justify-between border-b border-ink-200/70 px-4 py-2.5">
               <h2 className="text-sm font-semibold">Zones</h2>
               <span className="text-xs text-ink-400">
-                {counts.signature} signature · {counts.stamp} tampon · {counts.mention} mention ·{' '}
-                {counts.signature_stamp} combiné
+                {ZONE_TYPE.filter((t) => counts[t] > 0)
+                  .map((t) => `${counts[t]} ${ZONE_TYPE_LABEL[t].toLowerCase()}`)
+                  .join(' · ') || 'aucune zone'}
               </span>
             </div>
             {zones.length === 0 ? (

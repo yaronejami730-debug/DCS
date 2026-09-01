@@ -6,6 +6,7 @@ import {
   templateSourcePdfPath,
   type Template,
   type ZoneType,
+  ZONE_TYPE,
 } from '@scansign/shared';
 import { annotateTemplate, inspectPdf, looksLikePdf, sha256 } from '@scansign/pdf';
 import { db } from '../lib/supabase.js';
@@ -263,12 +264,10 @@ templateRoutes.get('/:id/export', async (c) => {
 
   // Number each kind independently: "SIGNATURE 1, TAMPON 1" reads far better
   // than the global zone index, which would call the first stamp "TAMPON 4".
-  const counters: Record<ZoneType, number> = {
-    signature: 0,
-    stamp: 0,
-    mention: 0,
-    signature_stamp: 0,
-  };
+  // Seeded from the list itself, so a type added later cannot be missed here.
+  const counters: Record<ZoneType, number> = Object.fromEntries(
+    ZONE_TYPE.map((t) => [t, 0]),
+  ) as Record<ZoneType, number>;
   const annotated = await annotateTemplate({
     pdfBytes: original,
     templateName: template.name,
