@@ -289,7 +289,8 @@ export const ShareLinkPanel = ({
   const [label, setLabel] = useState('');
   const [expiry, setExpiry] = useState('30');
   const [picked, setPicked] = useState<string[]>([]);
-  const [requireLocation, setRequireLocation] = useState(false);
+  // On by default: a field signature's evidence is where and when it happened.
+  const [requireLocation, setRequireLocation] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   /**
@@ -318,7 +319,7 @@ export const ShareLinkPanel = ({
           setOpen(false);
           setLabel('');
           setPicked([]);
-          setRequireLocation(false);
+          setRequireLocation(true);
         },
         onError: (e) =>
           setError(e instanceof ApiRequestError ? e.message : 'Création du lien impossible.'),

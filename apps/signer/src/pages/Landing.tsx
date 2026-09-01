@@ -1,8 +1,14 @@
-import { useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Suspense, lazy, useRef, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { ZONE_TYPE_LABEL } from '@scansign/shared';
 import { documentUrl, useSendSignedScan, useShareIntro } from '../lib/queries';
 import { requestLocation } from '../lib/geolocation';
+
+/**
+ * pdf.js only loads when a document is actually opened — it outweighs the rest
+ * of the app, and a technician who only came to send photos never needs it.
+ */
+const SheetViewer = lazy(() => import('../components/SheetViewer'));
 import { ApiRequestError } from '../lib/api';
 import {
   Button,
@@ -35,7 +41,6 @@ import {
  */
 export const LandingPage = () => {
   const { token } = useParams<{ token: string }>();
-  const navigate = useNavigate();
   const { data, isLoading, error } = useShareIntro(token);
 
   const send = useSendSignedScan();
@@ -43,6 +48,9 @@ export const LandingPage = () => {
   const [sent, setSent] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  const cameraInput = useRef<HTMLInputElement>(null);
+  /** The document open in the in-page viewer. */
+  const [viewing, setViewing] = useState<{ url: string; filename: string } | null>(null);
 
   /**
    * Open the PDF in a new tab, from which the phone can print or save it.
@@ -51,12 +59,15 @@ export const LandingPage = () => {
    * page: these expire after fifteen minutes, and a technician who comes back
    * to this tab an hour later must still be able to open the document.
    */
-  const openDocument = async (documentId: string) => {
+  const openDocument = async (documentId: string, filename: string) => {
     setOpening(documentId);
     setUploadError(null);
     try {
       const { url } = await documentUrl(documentId);
-      window.open(url, '_blank', 'noopener');
+      // In-page viewer, not a new tab: on a phone a new tab means losing this
+      // page, and on some Androids it means a download prompt instead of a
+      // view. Printing and sharing live inside the viewer.
+      setViewing({ url, filename });
     } catch (e) {
       setUploadError(
         e instanceof ApiRequestError ? e.message : "Ce document n'a pas pu être ouvert.",
@@ -78,13 +89,17 @@ export const LandingPage = () => {
      * a refusal or a failed fix simply sends the scan without a location — the
      * signature is what matters, the coordinate is corroboration.
      */
+    /**
+     * Always asked, not only when the link demands it: the returned page is
+     * evidence, and where-and-when is what makes it worth something. The
+     * browser still prompts and the technician can refuse — the pages go up
+     * regardless, just without the coordinate.
+     */
     let location = null as
       | { latitude: number; longitude: number; accuracy: number | null }
       | null;
-    if (data?.requireLocation) {
-      const outcome = await requestLocation();
-      if (outcome.status === 'coords') location = outcome.coords;
-    }
+    const outcome = await requestLocation();
+    if (outcome.status === 'coords') location = outcome.coords;
 
     send.mutate(
       { files: Array.from(files), location },
@@ -151,7 +166,7 @@ export const LandingPage = () => {
             <p className="text-sm text-ink-400">Aucun document rattaché à ce lien.</p>
           ) : (
             documents.map((doc) => (
-              <Card key={doc.id} onClick={() => void openDocument(doc.id)}>
+              <Card key={doc.id} onClick={() => void openDocument(doc.id, doc.filename)}>
                 <div className="flex items-center gap-3">
                   <span className="shrink-0 text-lg">📄</span>
                   <span className="min-w-0 flex-1">
@@ -159,7 +174,7 @@ export const LandingPage = () => {
                       {doc.filename}
                     </span>
                     <span className="mt-0.5 block text-[13px] text-ink-400">
-                      {doc.pageCount} page{doc.pageCount > 1 ? 's' : ''} · ouvrir / imprimer
+                      {doc.pageCount} page{doc.pageCount > 1 ? 's' : ''} · voir / imprimer
                     </span>
                   </span>
                   {opening === doc.id ? (
@@ -250,30 +265,20 @@ export const LandingPage = () => {
         {uploadError && <ErrorBanner message={uploadError} />}
       </section>
 
-      {/*
-        The older flow — photograph a signature on a blank sheet and let the
-        backend stamp it — still works and is still occasionally the right
-        answer: a folder of twenty documents is not worth printing. Kept as a
-        secondary path rather than the headline.
-      */}
-      <section className="mt-8 border-t border-ink-200 pt-5">
-        <p className="text-[13px] leading-5 text-ink-400">
-          Vous ne pouvez pas imprimer ? Photographiez votre signature sur une feuille blanche, elle
-          sera apposée numériquement.
-        </p>
-        <Button
-          variant="secondary"
-          className="mt-2.5"
-          onClick={() => navigate(`/s/${token}/photo`)}
-        >
-          Photographier ma signature
-        </Button>
-      </section>
-
       {data?.expiresAt && (
         <p className="mt-5 text-center text-xs text-ink-400">
           Ce lien expire le {new Date(data.expiresAt).toLocaleDateString('fr-FR')}.
         </p>
+      )}
+
+      {viewing && (
+        <Suspense fallback={<Loading label="Ouverture du document…" />}>
+          <SheetViewer
+            url={viewing.url}
+            filename={viewing.filename}
+            onClose={() => setViewing(null)}
+          />
+        </Suspense>
       )}
     </Screen>
   );

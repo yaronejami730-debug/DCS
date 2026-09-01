@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import type { ShareLinkReturn } from '@scansign/shared';
 import { useDeleteReturn, useMarkReturnHandled, useReturns } from '../lib/queries';
+import { PdfViewer } from './PdfViewer';
 import { Button, Card, Modal, Spinner, formatDate } from './ui';
 
 /**
@@ -23,6 +25,8 @@ export const ReturnsPanel = ({ folderId }: { folderId: string }) => {
   const handled = useMarkReturnHandled();
   const remove = useDeleteReturn();
   const [deleting, setDeleting] = useState<string | null>(null);
+  /** The return open in the viewer — the scan the operator is about to judge. */
+  const [viewing, setViewing] = useState<ShareLinkReturn | null>(null);
 
   const items = data?.items ?? [];
   // Waiting first: this panel is a to-do list, not an archive.
@@ -83,9 +87,9 @@ export const ReturnsPanel = ({ folderId }: { folderId: string }) => {
               )}
 
               {item.url && (
-                <a href={item.url} target="_blank" rel="noopener noreferrer">
-                  <Button variant="secondary">Voir</Button>
-                </a>
+                <Button variant="secondary" onClick={() => setViewing(item)}>
+                  Voir
+                </Button>
               )}
 
               <Link to={`/folders/${folderId}/reception/${item.id}`}>
@@ -111,6 +115,43 @@ export const ReturnsPanel = ({ folderId }: { folderId: string }) => {
           ))}
         </ul>
       )}
+
+      {/*
+        The scan, in place. It used to open in a raw browser tab — a PDF viewer
+        at best, a download at worst — when the whole point of looking is to
+        decide, right here, whether it is worth cropping.
+      */}
+      <Modal
+        open={viewing !== null}
+        size="wide"
+        title={viewing?.filename ?? 'Document reçu'}
+        onClose={() => setViewing(null)}
+        actions={
+          viewing && (
+            <Link to={`/folders/${folderId}/reception/${viewing.id}`}>
+              <Button>Recadrer les signatures</Button>
+            </Link>
+          )
+        }
+      >
+        {viewing?.url &&
+          (viewing.contentType === 'application/pdf' ? (
+            <PdfViewer url={viewing.url} maxWidth={860} />
+          ) : (
+            <img
+              src={viewing.url}
+              alt={viewing.filename}
+              className="mx-auto max-h-[75vh] rounded-lg ring-1 ring-ink-200"
+            />
+          ))}
+        {viewing?.location && (
+          <p className="mt-3 text-center text-xs text-ink-500">
+            📍 Signé le {formatDate(viewing.location.at)} à {viewing.location.latitude.toFixed(5)},{' '}
+            {viewing.location.longitude.toFixed(5)}
+            {viewing.location.accuracy ? ` (±${Math.round(viewing.location.accuracy)} m)` : ''}
+          </p>
+        )}
+      </Modal>
 
       <Modal
         open={deleting !== null}
