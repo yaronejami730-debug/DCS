@@ -59342,7 +59342,16 @@ var config = {
   // is validated before the build runs, and this function only exists after
   // the build has bundled it. Inline signing work needs the headroom.
   maxDuration: 300,
-  memory: 1024
+  memory: 1024,
+  api: {
+    /**
+     * Vercel's Node helper consumes the request stream to provide req.body,
+     * and Hono then blocks forever re-reading a stream that is already empty —
+     * GET answered instantly while every POST hung for the full duration.
+     * Hono owns its own body parsing; the helper must not touch it.
+     */
+    bodyParser: false
+  }
 };
 var vercel_entry_default = handle(createApp());
 export {
