@@ -215,6 +215,9 @@ importers:
       react-router-dom:
         specifier: 7.18.3
         version: 7.18.3(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      scanic:
+        specifier: ^1.6.0
+        version: 1.6.0
     devDependencies:
       '@tailwindcss/vite':
         specifier: 4.3.3
@@ -4503,6 +4506,10 @@ packages:
   sax@1.6.1:
     resolution: {integrity: sha512-42tBVwLWnaQvW5zc4HbZrTuWccECCZfBi92FDuwtqxasH+JbPB3/FOKb1m222K42R4WxuxzzMsTswfzgtSu64Q==}
     engines: {node: '>=11.0.0'}
+
+  scanic@1.6.0:
+    resolution: {integrity: sha512-p9qYL9cITvQ/BOrafsJvhm++Y8NA8GfRnwngUASqAyKUTRHqMuJzcrCuHjveHxQg29tNuEORUBDAAcigvFigPg==}
+    engines: {node: '>=22'}
 
   scheduler@0.26.0:
     resolution: {integrity: sha512-NlHwttCI/l5gCPR3D1nNXtWABUmBwvZpEQiD4IXSbIDq8BzLIK/7Ir5gTFSGZDUu37K5cMNp0hFtzO38sC7gWA==}
@@ -9928,6 +9935,8 @@ snapshots:
       is-regex: 1.2.1
 
   sax@1.6.1: {}
+
+  scanic@1.6.0: {}
 
   scheduler@0.26.0: {}
 

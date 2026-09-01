@@ -4,6 +4,7 @@ import { ZONE_TYPE_LABEL } from '@scansign/shared';
 import { documentUrl, useSendSignedScan, useShareIntro } from '../lib/queries';
 import { requestLocation } from '../lib/geolocation';
 import { reportStep, startPresence } from '../lib/activity';
+import { scanToDocument } from '../lib/scanner';
 
 /**
  * pdf.js only loads when a document is actually opened — it outweighs the rest
@@ -49,6 +50,8 @@ export const LandingPage = () => {
   const [sent, setSent] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  /** True while photos are being auto-cropped before upload. */
+  const [scanning, setScanning] = useState(false);
   const cameraInput = useRef<HTMLInputElement>(null);
 
   // The console's presence dot: heartbeat while this page is open.
@@ -90,6 +93,30 @@ export const LandingPage = () => {
     setUploadError(null);
 
     /**
+     * Auto-scan each image before it goes up: find the page, straighten it,
+     * crop the desk out — the way a scanner app does, on the device. A PDF is
+     * left as-is (already a document), and a photo where no page is found falls
+     * back to the original rather than a bad crop.
+     */
+    setScanning(true);
+    let toSend: File[];
+    try {
+      toSend = await Promise.all(
+        Array.from(files).map(async (file) => {
+          if (file.type === 'application/pdf') return file;
+          const { blob } = await scanToDocument(file);
+          return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', {
+            type: 'image/jpeg',
+          });
+        }),
+      );
+    } catch {
+      toSend = Array.from(files);
+    } finally {
+      setScanning(false);
+    }
+
+    /**
      * Ask for the location first, when the link requires it.
      *
      * Before the upload, not after: the browser's own permission prompt appears
@@ -111,7 +138,7 @@ export const LandingPage = () => {
     if (outcome.status === 'coords') location = outcome.coords;
 
     send.mutate(
-      { files: Array.from(files), location },
+      { files: toSend, location },
       {
         onSuccess: (result) => {
           setSent((prev) => [...prev, ...result.returned.map((r) => r.filename)]);
