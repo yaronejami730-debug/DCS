@@ -14,6 +14,47 @@ import { saveAttestationTemplate } from '../lib/attestationTemplate';
 const TYPES = ['Devis', 'Facture', "Attestation sur l'honneur", 'Mandat ou autorisation', 'Autre document'];
 
 /**
+ * The three real-world groupings. Each card drops its documents in at once,
+ * pre-configured: what the signer applies, and whether the signature varies.
+ * 'même signature avec variantes' → signature on (the pipeline varies it per
+ * document); 'tampon' → stamp on too.
+ */
+const PRESETS: {
+  key: string;
+  title: string;
+  note: string;
+  docs: AttestationDoc[];
+}[] = [
+  {
+    key: 'devis',
+    title: 'Devis & Études',
+    note: 'Même date, regroupés',
+    docs: [
+      { type: 'Devis', concerned: '', showApproval: true, wantSignature: true, wantStamp: false, combined: false },
+      { type: "Documents d'étude", concerned: '', showApproval: true, wantSignature: true, wantStamp: false, combined: false },
+    ],
+  },
+  {
+    key: 'ah',
+    title: 'AH & Stockage',
+    note: 'Même signature, avec variantes',
+    docs: [
+      { type: 'AH', concerned: '', showApproval: true, wantSignature: true, wantStamp: false, combined: false },
+      { type: 'Attestation de stockage', concerned: '', showApproval: true, wantSignature: true, wantStamp: false, combined: false },
+    ],
+  },
+  {
+    key: 'install',
+    title: 'Installation & Fin d’installation',
+    note: 'Même signature, avec variantes · tampon',
+    docs: [
+      { type: 'Installation', concerned: '', showApproval: true, wantSignature: true, wantStamp: true, combined: false },
+      { type: "Attestation de fin d'installation", concerned: '', showApproval: true, wantSignature: true, wantStamp: true, combined: false },
+    ],
+  },
+];
+
+/**
  * Generate the attestation PDF from a plain console form.
  *
  * No embedded editor, no print dialog: the operator fills fields the way they
@@ -169,6 +210,35 @@ export const AttestationPage = () => {
 
         {/* Éditeur (droite sur desktop, en premier sur mobile) */}
         <div className="order-1 space-y-5 lg:order-2">
+        <Card className="p-5">
+          <h2 className="mb-3 text-sm font-semibold">Modèles rapides</h2>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+            {PRESETS.map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                onClick={() =>
+                  setDocs((prev) => [...prev, ...preset.docs.map((d) => ({ ...d }))])
+                }
+                className="rounded-xl bg-brand-50 p-3 text-left ring-1 ring-brand-200 transition hover:bg-brand-100"
+              >
+                <p className="text-sm font-semibold text-brand-700">{preset.title}</p>
+                <ul className="mt-1.5 space-y-0.5">
+                  {preset.docs.map((d) => (
+                    <li key={d.type} className="text-xs text-ink-600">
+                      • {d.type}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 text-[11px] text-ink-400">{preset.note}</p>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2.5 text-xs text-ink-400">
+            Un clic ajoute les documents du modèle, préconfigurés. Vous pouvez ensuite ajuster.
+          </p>
+        </Card>
+
         <Card className="p-5">
           <h2 className="mb-4 text-sm font-semibold">Le signataire</h2>
           <div className="space-y-3">
