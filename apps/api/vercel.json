@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --frozen-lockfile=false",
-  "buildCommand": "mkdir -p public",
+  "buildCommand": "",
   "outputDirectory": "public",
   "functions": {
     "api/index.ts": {
@@ -9,5 +9,10 @@
       "memory": 1024
     }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ]
 }
