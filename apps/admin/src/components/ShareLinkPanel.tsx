@@ -359,19 +359,48 @@ export const ShareLinkPanel = ({
         ) : documents.length === 0 ? (
           <p className="px-5 py-6 text-sm text-ink-600">
             Aucune feuille de signature dans ce dossier. Importez un PDF avec « Importer des PDF »
-            en haut de la page, puis choisissez « la feuille que le signataire va signer ».
-          </p>
-        ) : links.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-ink-400">
-            Créez un lien et envoyez-le au signataire. Il imprime la feuille, la signe à la main,
-            la photographie et vous la renvoie — depuis n’importe quel navigateur, sans compte.
+            en haut de la page, puis choisissez « un lien de signature ».
           </p>
         ) : (
-          <ul className="flex flex-col gap-2 px-4 py-4">
-            {links.map((link) => (
-              <LinkRow key={link.id} link={link} folderId={folderId} documents={documents} />
-            ))}
-          </ul>
+          <>
+            {/*
+              The sheets themselves, before the links. They are excluded from
+              the "Documents à faire signer" card by design, so this is the ONE
+              place they are visible — without this list, an imported sheet
+              landed in the folder and appeared nowhere, which read as a failed
+              import.
+            */}
+            <div className="border-b border-ink-200/70 px-5 py-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-ink-400">
+                Feuilles de signature
+              </p>
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {documents.map((doc) => (
+                  <li key={doc.id} className="flex items-center gap-2.5 text-sm">
+                    <span className="shrink-0">📄</span>
+                    <span className="min-w-0 flex-1 truncate font-medium">{doc.filename}</span>
+                    <span className="shrink-0 text-xs text-ink-400">
+                      {doc.pageCount} page{doc.pageCount > 1 ? 's' : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {links.length === 0 ? (
+              <p className="px-5 py-6 text-sm text-ink-400">
+                Créez un lien et envoyez-le au signataire. Il imprime la feuille, la signe à la
+                main, la photographie et vous la renvoie — depuis n’importe quel navigateur, sans
+                compte.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2 px-4 py-4">
+                {links.map((link) => (
+                  <LinkRow key={link.id} link={link} folderId={folderId} documents={documents} />
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </div>
 
