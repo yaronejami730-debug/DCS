@@ -103,10 +103,30 @@ export const RegionSelector = ({
     onChangeRef.current = onChange;
   });
 
+  /**
+   * Coalesce drag updates to the display's own rhythm.
+   *
+   * Pointer events arrive at up to 120Hz; re-rendering React for each one made
+   * dragging on a large scan visibly stutter, since every update also redraws
+   * the live crop preview. One rAF per frame keeps the box glued to the finger
+   * at exactly the rate the screen can show it.
+   */
+  const frame = useRef<number | null>(null);
+  const pendingRect = useRef<NormalizedRect | null>(null);
   const apply = useCallback((next: NormalizedRect) => {
     rectRef.current = next;
-    setRect(next);
-    onChangeRef.current(next);
+    pendingRect.current = next;
+    if (frame.current !== null) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      if (!pendingRect.current) return;
+      setRect(pendingRect.current);
+      onChangeRef.current(pendingRect.current);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
   }, []);
 
   // Adopt a selection supplied by the parent — a restored step, or a region the
