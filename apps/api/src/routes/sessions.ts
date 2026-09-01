@@ -309,7 +309,9 @@ sessionRoutes.post('/signing-sessions/:id/photo/:mark', async (c) => {
     c.req.query('skipDetect') === '1' ? null : await detectInkRegionsSafely(normalized.bytes);
   // Only the region matching this mark is meaningful here.
   const suggested =
-    mark === 'stamp' ? (suggestions.stamp ?? suggestions.signature) : suggestions.signature;
+    mark === 'stamp'
+      ? (suggestions?.stamp ?? suggestions?.signature ?? null)
+      : (suggestions?.signature ?? null);
 
   await audit({
     ownerId: user.id,
