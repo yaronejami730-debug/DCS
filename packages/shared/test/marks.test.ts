@@ -36,9 +36,18 @@ describe('marksToCapture', () => {
     expect(needed).toEqual(['signature', 'signature_stamp', 'mention']);
   });
 
-  it('handles a folder wanting all four', () => {
+  it('handles a folder wanting all four legacy marks', () => {
     const needed = marksToCapture({ signature: 1, stamp: 1, mention: 1, signature_stamp: 1 });
-    expect([...needed].sort()).toEqual([...ZONE_TYPE].sort());
+    // Not "all of ZONE_TYPE": the list has since grown past these four, and
+    // marks the folder does not ask for must not be captured.
+    expect([...needed].sort()).toEqual(
+      ['signature', 'signature_stamp', 'stamp', 'mention'].sort(),
+    );
+  });
+
+  it('asks for the extended marks when the templates want them', () => {
+    const needed = marksToCapture({ signature: 1, quote_date: 2, checkbox: 1 });
+    expect(needed).toEqual(['signature', 'quote_date', 'checkbox']);
   });
 
   it('ignores marks with a zero count', () => {

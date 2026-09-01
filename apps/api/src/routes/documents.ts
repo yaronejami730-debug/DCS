@@ -1,7 +1,5 @@
 import { Hono, type Context } from 'hono';
-import { adjustPlacementSchema, assignTemplateSchema
-  ZONE_TYPE,
-} from '@scansign/shared';
+import { ZONE_TYPE, adjustPlacementSchema, assignTemplateSchema } from '@scansign/shared';
 import { annotateTemplate } from '@scansign/pdf';
 import { ZONE_TYPE_LABEL, previewPdfPath, type ZoneType } from '@scansign/shared';
 import { db } from '../lib/supabase.js';
