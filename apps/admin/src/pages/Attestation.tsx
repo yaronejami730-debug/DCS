@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useFolder } from '../lib/queries';
 import { Page } from '../components/Layout';
+import { PdfViewer } from '../components/PdfViewer';
 import { Button, Card, Field, Modal } from '../components/ui';
 import {
   generateAttestationPdf,
@@ -71,6 +72,38 @@ export const AttestationPage = () => {
     }
   };
 
+  // Live preview: rebuild the PDF as the operator edits, so the left pane shows
+  // exactly what will be generated. Debounced — pdf-lib is fast, but pdf.js
+  // re-rendering on every keystroke is not worth it.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const bytes = await generateAttestationPdf(signer, docs);
+        if (cancelled) return;
+        const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = url;
+        setPreviewUrl(url);
+      } catch {
+        /* a transient bad state while typing — keep the last good preview */
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [signer, docs]);
+  useEffect(
+    () => () => {
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    },
+    [],
+  );
+
   const [saved, setSaved] = useState(false);
   const useAsTemplate = async () => {
     setBusy(true);
@@ -104,8 +137,20 @@ export const AttestationPage = () => {
         </>
       }
     >
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        {/* Signataire */}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        {/* Aperçu vivant du PDF (gauche) */}
+        <div className="lg:sticky lg:top-4 lg:self-start">
+          <div className="max-h-[calc(100vh-150px)] overflow-y-auto rounded-xl bg-ink-100 p-3 ring-1 ring-ink-200/70">
+            {previewUrl ? (
+              <PdfViewer url={previewUrl} maxWidth={480} />
+            ) : (
+              <p className="py-16 text-center text-sm text-ink-400">Préparation de l’aperçu…</p>
+            )}
+          </div>
+        </div>
+
+        {/* Éditeur (droite) */}
+        <div className="space-y-5">
         <Card className="p-5">
           <h2 className="mb-4 text-sm font-semibold">Le signataire</h2>
           <div className="space-y-3">
@@ -281,6 +326,7 @@ export const AttestationPage = () => {
             </Button>
           </div>
         </Card>
+        </div>
       </div>
 
       <Modal
