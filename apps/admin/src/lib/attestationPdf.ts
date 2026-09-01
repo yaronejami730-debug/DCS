@@ -165,7 +165,28 @@ export const generateAttestationPdf = async (
     page.drawRectangle({ x: MARGIN, y: y - habH, width: contentW, height: habH, color: GREEN_SOFT });
     page.drawRectangle({ x: MARGIN, y: y - habH, width: 4, height: habH, color: GREEN });
     drawParagraph(page, habil, MARGIN + 18, y - 18, font, 11, contentW - 36, INK);
-    y -= habH;
+    y -= habH + 16;
+
+    // À quoi sert ce document — comble le blanc sous l'habilitation.
+    page.drawText(safe('À quoi sert ce document'), {
+      x: MARGIN,
+      y,
+      size: 12,
+      font: bold,
+      color: GREEN,
+    });
+    y -= 18;
+    y = drawParagraph(
+      page,
+      "Cette attestation réunit, en une seule fois, votre accord sur les documents concernés. Elle nous évite de vous solliciter à répétition : vous signez à la main, une fois, et chaque signature n'est ensuite reprise que sur le document auquel elle correspond. Vous gardez la maîtrise de ce que vous acceptez, document par document, sur les pages qui suivent.",
+      MARGIN,
+      y,
+      font,
+      11,
+      contentW,
+      INK,
+      1.4,
+    );
 
     // Note légale — bas de page
     const note =
@@ -188,18 +209,18 @@ export const generateAttestationPdf = async (
     page.drawText(safe(`Document ${i + 1} - ${doc.type}`), {
       x: MARGIN,
       y,
-      size: 17,
+      size: 16,
       font: bold,
       color: GREEN,
     });
-    y -= 12;
+    y -= 10;
     page.drawLine({
-      start: { x: MARGIN, y: y - 4 },
-      end: { x: MARGIN + contentW, y: y - 4 },
+      start: { x: MARGIN, y: y - 3 },
+      end: { x: MARGIN + contentW, y: y - 3 },
       thickness: 1.5,
       color: GREEN_SOFT,
     });
-    y -= 26;
+    y -= 18;
 
     const concerned = doc.concerned || '__________________________________';
     page.drawText(safe(`Document concerné : ${concerned}`), {
@@ -209,12 +230,12 @@ export const generateAttestationPdf = async (
       font: bold,
       color: BLUEGREY,
     });
-    y -= 24;
+    y -= 16;
 
     // Deux zones côte à côte
     const gap = 18;
     const colW = (contentW - gap) / 2;
-    const zoneH = 250;
+    const zoneH = 340;
     const zoneTop = y;
 
     // Infos (gauche)
@@ -234,7 +255,8 @@ export const generateAttestationPdf = async (
       font: bold,
       color: BLUEGREY,
     });
-    for (let l = 0; l < 8; l++) {
+    const infoLines = Math.floor((zoneH - 44) / 24);
+    for (let l = 0; l < infoLines; l++) {
       const ly = zoneTop - 44 - l * 24;
       page.drawLine({
         start: { x: MARGIN + 14, y: ly },
@@ -328,15 +350,42 @@ export const generateAttestationPdf = async (
       });
     }
 
-    y = zoneTop - zoneH - 22;
+    y = zoneTop - zoneH - 18;
 
-    // Confirmation
-    const confirm =
-      "Je confirme avoir lu et accepté le document indiqué ci-dessus. J'autorise la reproduction de la signature présente sur cette page, uniquement sur ce document.";
-    const cLines = wrap(confirm, font, 11, contentW - 32);
-    const cH = cLines.length * 11 * 1.45 + 20;
-    page.drawRectangle({ x: MARGIN, y: y - cH, width: contentW, height: cH, color: rgb(0.933, 0.945, 0.956) });
-    drawParagraph(page, confirm, MARGIN + 16, y - 16, font, 11, contentW - 32, INK);
+    // Autorisation cochée à la main par le dirigeant, nommant le document.
+    const docName = doc.concerned || doc.type;
+    const authText =
+      "J'autorise que la signature portée sur cette page soit reproduite uniquement sur le document concerné : " +
+      docName +
+      '.';
+    const boxSize = 13;
+    const textX = MARGIN + 40 + boxSize;
+    const authLines = wrap(authText, font, 11, contentW - 80 - boxSize);
+    const cH = Math.max(authLines.length * 11 * 1.45 + 22, 44);
+    // encadré centré
+    const cardW = contentW;
+    page.drawRectangle({
+      x: MARGIN,
+      y: y - cH,
+      width: cardW,
+      height: cH,
+      color: rgb(0.933, 0.945, 0.956),
+    });
+    // checkbox vide, à cocher à la main
+    page.drawRectangle({
+      x: MARGIN + 20,
+      y: y - 18 - 2,
+      width: boxSize,
+      height: boxSize,
+      borderColor: GREEN,
+      borderWidth: 1.5,
+      color: rgb(1, 1, 1),
+    });
+    let ay = y - 16;
+    for (const line of authLines) {
+      page.drawText(safe(line), { x: textX, y: ay, size: 11, font, color: INK });
+      ay -= 11 * 1.45;
+    }
 
     // Pied
     drawParagraph(

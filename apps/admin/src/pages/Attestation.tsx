@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useFolder } from '../lib/queries';
 import { Page } from '../components/Layout';
-import { Button, Card, Field, Select } from '../components/ui';
+import { Button, Card, Field, Modal } from '../components/ui';
 import {
   generateAttestationPdf,
   type AttestationDoc,
@@ -35,6 +35,8 @@ export const AttestationPage = () => {
   ]);
   const [newType, setNewType] = useState<string>(TYPES[0]!);
   const [busy, setBusy] = useState(false);
+  /** Row being edited in the modal — opened for 'Autre document' or via Éditer. */
+  const [editing, setEditing] = useState<number | null>(null);
 
   const seededFolder = folder?.name;
   const seedFromFolder = () => {
@@ -127,14 +129,30 @@ export const AttestationPage = () => {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-brand-600">{i + 1}.</span>
                   <select
-                    value={doc.type}
-                    onChange={(e) => setDoc(i, { type: e.target.value })}
+                    value={TYPES.includes(doc.type) ? doc.type : 'Autre document'}
+                    onChange={(e) => {
+                      if (e.target.value === 'Autre document') {
+                        setDoc(i, { type: doc.type && !TYPES.includes(doc.type) ? doc.type : '' });
+                        setEditing(i);
+                      } else {
+                        setDoc(i, { type: e.target.value });
+                      }
+                    }}
                     className="rounded-lg bg-white px-2.5 py-1.5 text-sm ring-1 ring-ink-200 outline-none focus:ring-2 focus:ring-brand-500"
                   >
                     {TYPES.map((t) => (
                       <option key={t}>{t}</option>
                     ))}
                   </select>
+                  {!TYPES.includes(doc.type) && doc.type && (
+                    <span className="truncate text-xs font-medium text-ink-700">« {doc.type} »</span>
+                  )}
+                  <button
+                    onClick={() => setEditing(i)}
+                    className="text-xs font-medium text-brand-600 hover:underline"
+                  >
+                    Éditer
+                  </button>
                   <button
                     onClick={() => setDocs((prev) => prev.filter((_, j) => j !== i))}
                     className="ml-auto text-xs font-medium text-red-600 hover:underline"
@@ -205,15 +223,103 @@ export const AttestationPage = () => {
             </select>
             <Button
               variant="secondary"
-              onClick={() =>
-                setDocs((prev) => [...prev, { type: newType, concerned: '', showApproval: false, wantSignature: true, wantStamp: true }])
-              }
+              onClick={() => {
+                const isOther = newType === 'Autre document';
+                setDocs((prev) => [
+                  ...prev,
+                  {
+                    type: isOther ? '' : newType,
+                    concerned: '',
+                    showApproval: false,
+                    wantSignature: true,
+                    wantStamp: true,
+                  },
+                ]);
+                if (isOther) setEditing(docs.length);
+              }}
             >
               Ajouter ce document
             </Button>
           </div>
         </Card>
       </div>
+
+      <Modal
+        open={editing !== null}
+        title="Éditer le document"
+        onClose={() => setEditing(null)}
+      >
+        {editing !== null && docs[editing] && (
+          <div className="space-y-4">
+            <Field
+              label="Nom du document"
+              value={docs[editing]!.type}
+              onChange={(e) => setDoc(editing, { type: e.target.value })}
+              placeholder="Ex. Bon de commande, PV de réception…"
+            />
+            <Field
+              label="Document concerné"
+              value={docs[editing]!.concerned}
+              onChange={(e) => setDoc(editing, { concerned: e.target.value })}
+              placeholder="Ex. Devis n° 1048"
+            />
+            <div>
+              <span className="mb-1.5 block text-sm font-medium text-ink-800">
+                À faire apparaître dans la zone
+              </span>
+              <div className="space-y-2">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-700">
+                  <input
+                    type="checkbox"
+                    checked={docs[editing]!.wantSignature}
+                    onChange={(e) =>
+                      setDoc(editing, {
+                        wantSignature: e.target.checked,
+                        wantStamp: e.target.checked ? docs[editing]!.wantStamp : true,
+                      })
+                    }
+                    className="h-4 w-4 rounded border-ink-300 accent-brand-600"
+                  />
+                  Signature manuscrite du dirigeant
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-700">
+                  <input
+                    type="checkbox"
+                    checked={docs[editing]!.wantStamp}
+                    onChange={(e) =>
+                      setDoc(editing, {
+                        wantStamp: e.target.checked,
+                        wantSignature: e.target.checked ? docs[editing]!.wantSignature : true,
+                      })
+                    }
+                    className="h-4 w-4 rounded border-ink-300 accent-brand-600"
+                  />
+                  Cachet de la société
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-700">
+                  <input
+                    type="checkbox"
+                    checked={docs[editing]!.showApproval}
+                    onChange={(e) => setDoc(editing, { showApproval: e.target.checked })}
+                    className="h-4 w-4 rounded border-ink-300 accent-brand-600"
+                  />
+                  Mention « Lu et approuvé »
+                </label>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button
+                onClick={() => {
+                  if (!docs[editing]!.type.trim()) setDoc(editing, { type: 'Autre document' });
+                  setEditing(null);
+                }}
+              >
+                Terminer
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <p className="mt-4 max-w-3xl text-xs leading-5 text-ink-400">
         Signature manuscrite, non électronique : le dirigeant signe à la main sur l’attestation.
