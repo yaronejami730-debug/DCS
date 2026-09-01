@@ -2,7 +2,8 @@ import type { DocumentStatus, FolderStatus, SessionStatus } from './status.js';
 
 /**
  * Live updates pushed from the backend to whichever clients an account has
- * open — the web console and the iPhone at the same time.
+ * open — the console in one tab, the signer following a share link in
+ * another.
  *
  * Deliberately thin: an event says *what changed*, never carries the changed
  * row. Clients refetch through their normal authenticated endpoints, so a
@@ -10,12 +11,11 @@ import type { DocumentStatus, FolderStatus, SessionStatus } from './status.js';
  * the payload cannot drift out of step with the real record.
  */
 export type RealtimeEvent =
-  | { type: 'folder.sent'; folderId: string; deviceId: string | null; name: string }
+  | { type: 'folder.shared'; folderId: string; name: string }
   | { type: 'folder.updated'; folderId: string; status: FolderStatus }
   | { type: 'folder.deleted'; folderId: string }
   | { type: 'document.updated'; documentId: string; folderId: string; status: DocumentStatus }
-  | { type: 'session.updated'; sessionId: string; folderId: string; status: SessionStatus }
-  | { type: 'device.updated'; deviceId: string };
+  | { type: 'session.updated'; sessionId: string; folderId: string; status: SessionStatus };
 
 /** Client -> server. The token is sent in a frame, never in the URL. */
 export type RealtimeClientMessage = { type: 'auth'; token: string } | { type: 'ping' };

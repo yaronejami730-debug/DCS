@@ -24,7 +24,7 @@ const toSession = (session: {
 });
 
 /**
- * The same credentials work here for the web console and for the iPhone.
+ * The console's sign-in. Signers do not have accounts: they follow a link.
  * Both clients call this endpoint rather than talking to Supabase directly,
  * which is why neither bundle contains a Supabase key.
  */
@@ -49,7 +49,7 @@ authRoutes.post('/signup', async (c) => {
 
   // With AUTO_CONFIRM_SIGNUP the backend creates the account through the admin
   // API already confirmed, so the same credentials work on the console and on
-  // the phone immediately. Without it we fall back to the normal Supabase flow
+  // the console immediately. Without it we fall back to the normal Supabase flow
   // and the project's own email-confirmation setting applies.
   if (env.AUTO_CONFIRM_SIGNUP) {
     const { error } = await db.auth.admin.createUser({

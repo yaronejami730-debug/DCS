@@ -37,7 +37,7 @@ export const LoginPage = () => {
             Scan<span className="text-brand-600">&amp;</span>Sign
           </p>
           <p className="mt-1 text-sm text-ink-400">
-            Le même compte vous connecte ici et sur l’iPhone.
+            Connectez-vous pour gérer vos dossiers et vos liens de signature.
           </p>
         </div>
 

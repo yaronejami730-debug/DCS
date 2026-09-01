@@ -16,8 +16,8 @@ import { audit } from '../lib/audit.js';
 import { HttpError } from '../lib/errors.js';
 import { cropNormalizedRegion, imageSize, trimTransparentBorder } from './images.js';
 import { createExtractionProvider } from './extraction/index.js';
-import { loadTemplateZones, zoneRowToRect } from './templates.js';
-import { fallbackVariantIndex, variantAt } from './variants.js';
+import { zonesForDocument } from './placement.js';
+import { fallbackVariantIndex, variantAt, variantPlacement } from './variants.js';
 import { notifyFolderCompleted, notifyFolderFailed } from './notify.js';
 import { publish } from '../lib/realtime.js';
 
@@ -25,7 +25,8 @@ interface SessionRow {
   id: string;
   folder_id: string;
   owner_id: string;
-  device_id: string | null;
+  /** Null when the console started the session; set when a link did. */
+  share_link_id: string | null;
   capture_mode: 'single' | 'per_mark';
   photo_path: string | null;
   photo_width: number | null;
@@ -106,7 +107,7 @@ export const processSigningSession = async (
   const { data: session } = await db
     .from('signing_sessions')
     .select(
-      'id, folder_id, owner_id, device_id, capture_mode, photo_path, photo_width, photo_height, signature_photo_path, stamp_photo_path, mention_photo_path, signature_stamp_photo_path',
+      'id, folder_id, owner_id, share_link_id, capture_mode, photo_path, photo_width, photo_height, signature_photo_path, stamp_photo_path, mention_photo_path, signature_stamp_photo_path',
     )
     .eq('id', sessionId)
     .maybeSingle<SessionRow>();
@@ -119,8 +120,34 @@ export const processSigningSession = async (
     await failSession(sessionId, folderId, ownerId, 'IMAGE_PROCESSING_FAILED', 'Photo manquante.');
     return;
   }
-  if (perMark && !session.signature_photo_path) {
-    await failSession(sessionId, folderId, ownerId, 'IMAGE_PROCESSING_FAILED', 'Photo de signature manquante.');
+  /**
+   * In per-mark capture, require that *some* mark was photographed.
+   *
+   * This used to demand `signature_photo_path` specifically, which failed a
+   * folder that never asks for a bare signature. A template calling for a
+   * signed stamp and a "Lu et approuvé" is captured as `signature_stamp` +
+   * `mention`, and there is no separate signature photo to find — so the
+   * signer did exactly what was asked and the pipeline rejected it with
+   * "Photo de signature manquante", every time, on every retry.
+   *
+   * Which marks are actually required is known further down, once the
+   * templates have been read; the check that each required mark has its photo
+   * happens there, against the real requirement rather than a guess.
+   */
+  const capturedMarks = [
+    session.signature_photo_path,
+    session.stamp_photo_path,
+    session.mention_photo_path,
+    session.signature_stamp_photo_path,
+  ].filter(Boolean);
+  if (perMark && capturedMarks.length === 0) {
+    await failSession(
+      sessionId,
+      folderId,
+      ownerId,
+      'IMAGE_PROCESSING_FAILED',
+      'Aucune photo de marque n’a été reçue pour cette session.',
+    );
     return;
   }
 
@@ -131,16 +158,62 @@ export const processSigningSession = async (
     .eq('id', folderId);
   publish(ownerId, { type: 'folder.updated', folderId, status: 'processing' });
 
+  /**
+   * The documents this signature is for.
+   *
+   * A session opened through a share link is bound to whatever subset that link
+   * covers, so a technician signing the delivery notes cannot have their
+   * signature land on the contract next to them. An empty subset — or no link
+   * at all, meaning the console — is the whole folder.
+   *
+   * Filtered here rather than in the query so that "the link named documents
+   * that have since been deleted" is caught below as an empty selection, with a
+   * message, instead of silently signing everything.
+   */
+  const scopedIds = session.share_link_id
+    ? new Set(
+        (
+          (
+            await db
+              .from('folder_share_link_documents')
+              .select('document_id')
+              .eq('link_id', session.share_link_id)
+              .returns<Array<{ document_id: string }>>()
+          ).data ?? []
+        ).map((r) => r.document_id),
+      )
+    : null;
+
+  /**
+   * Contracts only.
+   *
+   * `for_signing` rows are the sheet the technician printed and signed — the
+   * source of the ink. Stamping a signature back onto the page it was cut out
+   * of is not a coherent operation, and it would also count that sheet towards
+   * the folder being finished.
+   */
   const { data: documents } = await db
     .from('documents')
     .select('id, filename, storage_path, template_id, status')
     .eq('folder_id', folderId)
+    .eq('role', 'to_sign')
     .order('position', { ascending: true })
     .returns<DocumentRow[]>();
 
-  const docs = documents ?? [];
+  const all = documents ?? [];
+  const docs =
+    scopedIds && scopedIds.size > 0 ? all.filter((d) => scopedIds.has(d.id)) : all;
+
   if (docs.length === 0) {
-    await failSession(sessionId, folderId, ownerId, 'INTERNAL_ERROR', 'Ce dossier ne contient aucun document.');
+    await failSession(
+      sessionId,
+      folderId,
+      ownerId,
+      'INTERNAL_ERROR',
+      all.length === 0
+        ? 'Ce dossier ne contient aucun document.'
+        : 'Les documents de ce lien de signature n’existent plus.',
+    );
     return;
   }
 
@@ -153,12 +226,17 @@ export const processSigningSession = async (
     signature_stamp: false,
   };
   for (const doc of docs) {
-    if (!doc.template_id) continue;
-    const rows = await loadTemplateZones(doc.template_id);
-    const zones = rows.map<PlacementZone>((row) => ({
-      page: row.page,
-      type: row.type,
-      rect: zoneRowToRect(row),
+    // A document an operator has repositioned keeps its own geometry when the
+    // folder is signed again. Falling back to the template here would silently
+    // undo that adjustment on the next signature, which is the behaviour the
+    // per-document override exists to prevent.
+    const { zones: placement } = await zonesForDocument(doc);
+    if (placement.length === 0) continue;
+
+    const zones = placement.map<PlacementZone>((zone) => ({
+      page: zone.page,
+      type: zone.type,
+      rect: zone.rect,
     }));
     zonesByDocument.set(doc.id, zones);
     for (const zone of zones) needs[zone.type] = true;
@@ -218,6 +296,9 @@ export const processSigningSession = async (
 
   const provider = createExtractionProvider();
   const cutouts: Partial<Record<ZoneType, Uint8Array>> = {};
+  const enginesUsed = new Set<string>();
+  let fellBack = false;
+  let credits = 0;
 
   /**
    * In single-photo mode every mark is framed on one sheet, so each region is
@@ -274,6 +355,14 @@ export const processSigningSession = async (
           ? await provider.extractStamp({ image: crop, contentType: 'image/png' })
           : await provider.extractSignature({ image: crop, contentType: 'image/png' });
       cutouts[mark] = (await trimTransparentBorder(extracted.png, FAILURE[mark])).bytes;
+
+      // Which engine actually produced each mark, and what it cost. With a
+      // metered API in the pipeline this is the only record of the spend, and
+      // of the runs that quietly used the other engine instead.
+      enginesUsed.add(String(extracted.meta?.engine ?? provider.name));
+      if (extracted.meta?.fellBack === true) fellBack = true;
+      const charged = Number(extracted.meta?.creditsCharged ?? 0);
+      if (Number.isFinite(charged)) credits += charged;
     }
 
     await audit({
@@ -282,6 +371,9 @@ export const processSigningSession = async (
       action: 'extraction.completed',
       metadata: {
         provider: provider.name,
+        engines: [...enginesUsed],
+        fellBack,
+        credits,
         captureMode: session.capture_mode,
         marks: Object.keys(cutouts),
       },
@@ -321,11 +413,21 @@ export const processSigningSession = async (
   // --- per-document generation -------------------------------------------
   let succeeded = 0;
   let failed = 0;
+  /**
+   * Documents this folder holds that no template describes yet.
+   *
+   * Not a failure of this signing run: nothing was attempted for them and
+   * nothing went wrong. Counting them as failures marked the whole folder
+   * `error` even when every configured document was signed, and since an
+   * unconfigured document never configures itself, every retry reproduced the
+   * same error — leaving the folder permanently stuck.
+   */
+  let skipped = 0;
 
-  for (const doc of docs) {
+  for (const [ordinal, doc] of docs.entries()) {
     const zones = zonesByDocument.get(doc.id);
     if (!zones || zones.length === 0) {
-      failed += 1;
+      skipped += 1;
       await db
         .from('documents')
         .update({
@@ -344,7 +446,7 @@ export const processSigningSession = async (
       /**
        * Use the variant the signer picked for THIS document.
        *
-       * The index is what was assigned on the phone, and a variant is derived
+       * The index is what the console assigned, and a variant is derived
        * from its index alone — so the image stamped here is precisely the one
        * they looked at and approved. Where nothing was assigned, an index is
        * derived from the document id so documents in a folder still differ.
@@ -352,6 +454,16 @@ export const processSigningSession = async (
        * A stamp is never varied: it is a physical die and reproduces
        * identically by design.
        */
+      /**
+       * Remember which variant was used, not just apply it.
+       *
+       * The index is recorded on the document so the mark can be regenerated
+       * later — moved or resized from the console — and come back as the same
+       * signature. Deriving it again at that point would work only until the
+       * folder's document count changed, and would silently redraw the mark
+       * rather than move it.
+       */
+      let variantIndex: number | null = null;
       const varied = async (
         png: Uint8Array | null,
         mark: ZoneType,
@@ -359,7 +471,10 @@ export const processSigningSession = async (
         if (!png) return null;
         if (!env.SIGNATURE_VARIANTS || !HANDWRITTEN_MARKS.includes(mark)) return png;
         const assigned = regions.assignments?.[mark]?.[doc.id];
-        const index = assigned ?? fallbackVariantIndex(doc.id, Math.max(docs.length, 1));
+        // The document's own place in the folder, so no two documents in one
+        // signing can land on the same variant.
+        const index = assigned ?? fallbackVariantIndex(ordinal);
+        variantIndex = index;
         return variantAt(png, index);
       };
 
@@ -370,12 +485,30 @@ export const processSigningSession = async (
         stampPng,
         mentionPng: await varied(mentionPng, 'mention'),
         combinedPng: await varied(combinedPng, 'signature_stamp'),
+              fit: { fill: env.MARK_FILL, maxHeightOverflow: env.MARK_MAX_OVERFLOW },
+        // Size, position and tilt for THIS signing. Applied at placement, where
+        // nothing normalises it away — see variantPlacement.
+        variation:
+          env.SIGNATURE_VARIANTS && variantIndex !== null
+            ? variantPlacement(variantIndex, env.SIGNATURE_VARIATION_STRENGTH)
+            : undefined,
       });
 
       const outPath = processedPdfPath(ownerId, doc.id);
       await uploadObject(outPath, bytes, 'application/pdf');
 
-      await db
+      /**
+       * Mark the document signed. This update is the one that must not fail:
+       * the PDF is already in storage, and a document left at `processing`
+       * with no final_pdf_path is invisible in the console —
+       * signed, but with no way to reach it.
+       *
+       * supabase-js reports failures in the result rather than throwing, so an
+       * ignored `error` here is silent. It happened: adding two columns to
+       * this update before their migration had run made every document in a
+       * folder stall exactly that way, while the folder reported success.
+       */
+      const { error: completionError } = await db
         .from('documents')
         .update({
           status: 'completed',
@@ -384,6 +517,32 @@ export const processSigningSession = async (
           error_message: null,
         })
         .eq('id', doc.id);
+      if (completionError) {
+        throw new HttpError(
+          500,
+          `Le PDF signé a été produit mais le document n'a pas pu être mis à jour : ${completionError.message}`,
+          'INTERNAL_ERROR',
+        );
+      }
+
+      /**
+       * Then the provenance a later repositioning needs: whose cutouts, and
+       * which variant. Deliberately a second statement, and deliberately
+       * tolerant — this is a nicety, and it must never be able to strand a
+       * document that is otherwise correctly signed. Missing columns simply
+       * mean the console will not offer to reposition this document yet.
+       */
+      const { error: provenanceError } = await db
+        .from('documents')
+        .update({ signing_session_id: sessionId, variant_index: variantIndex })
+        .eq('id', doc.id);
+      if (provenanceError) {
+        console.warn(
+          '[processing] document %s signed, but provenance not recorded: %s',
+          doc.id,
+          provenanceError.message,
+        );
+      }
 
       succeeded += 1;
       publish(ownerId, {
@@ -416,26 +575,40 @@ export const processSigningSession = async (
     }
   }
 
-  const allGood = failed === 0 && succeeded > 0;
+  /** Nothing broke: every document that had a template was signed. */
+  const cleanRun = failed === 0 && succeeded > 0;
+  /** …and there is nothing left for the operator to configure either. */
+  const allGood = cleanRun && skipped === 0;
   const now = new Date().toISOString();
 
+  const pending =
+    skipped === 1
+      ? '1 document reste à configurer.'
+      : `${skipped} documents restent à configurer.`;
+
+  // The session is the signer's run. It succeeded whenever nothing broke —
+  // documents awaiting configuration are the operator's job, not theirs, and
+  // reporting a failure they cannot act on is what stranded them.
   await db
     .from('signing_sessions')
     .update({
-      status: allGood ? 'completed' : 'error',
+      status: cleanRun ? 'completed' : 'error',
       completed_at: now,
-      error_code: allGood ? null : 'PDF_GENERATION_FAILED',
-      error_message: allGood ? null : `${failed} document(s) en échec.`,
+      error_code: cleanRun ? null : 'PDF_GENERATION_FAILED',
+      error_message: cleanRun ? null : `${failed} document(s) en échec.`,
     })
     .eq('id', sessionId);
 
+  // The folder is only `completed` once every document has a final PDF. With
+  // documents still to configure it goes back to `in_progress` — work left to
+  // do, but no error, so the folder can be signed again once they are set up.
   await db
     .from('folders')
     .update({
-      status: allGood ? 'completed' : 'error',
+      status: allGood ? 'completed' : cleanRun ? 'in_progress' : 'error',
       completed_at: allGood ? now : null,
-      error_code: allGood ? null : 'PDF_GENERATION_FAILED',
-      error_message: allGood ? null : `${failed} document(s) en échec.`,
+      error_code: cleanRun ? null : 'PDF_GENERATION_FAILED',
+      error_message: allGood ? null : cleanRun ? pending : `${failed} document(s) en échec.`,
     })
     .eq('id', folderId);
 
@@ -486,22 +659,22 @@ export const processSigningSession = async (
   publish(ownerId, {
     type: 'folder.updated',
     folderId,
-    status: allGood ? 'completed' : 'error',
+    status: allGood ? 'completed' : cleanRun ? 'in_progress' : 'error',
   });
   publish(ownerId, {
     type: 'session.updated',
     sessionId,
     folderId,
-    status: allGood ? 'completed' : 'error',
+    status: cleanRun ? 'completed' : 'error',
   });
 
-  if (allGood) await notifyFolderCompleted(ownerId, folderId, succeeded);
+  if (cleanRun) await notifyFolderCompleted(ownerId, folderId, succeeded);
   else await notifyFolderFailed(ownerId, folderId, 'PDF_GENERATION_FAILED');
 
   await audit({
     ownerId,
     folderId,
-    action: allGood ? 'folder.completed' : 'folder.failed',
-    metadata: { succeeded, failed },
+    action: cleanRun ? 'folder.completed' : 'folder.failed',
+    metadata: { succeeded, failed, skipped },
   });
 };

@@ -13,6 +13,8 @@ export const STORAGE_PREFIX = {
   photos: 'photos',
   previews: 'previews',
   templates: 'templates',
+  /** Signed pages sent back by a technician through a share link. */
+  returns: 'returns',
 } as const;
 
 export const originalPdfPath = (ownerId: string, documentId: string): string =>
@@ -27,6 +29,16 @@ export const processedPdfPath = (ownerId: string, documentId: string): string =>
 
 export const photoPath = (ownerId: string, sessionId: string, ext: string): string =>
   `${STORAGE_PREFIX.photos}/${ownerId}/${sessionId}.${ext}`;
+
+/**
+ * A signed page the technician sent back.
+ *
+ * Kept under its own prefix rather than with `originals`: an original is
+ * something the operator put in to be signed, a return is evidence coming back
+ * the other way, and the retention rules for the two are not the same.
+ */
+export const returnPath = (ownerId: string, returnId: string, ext: string): string =>
+  `${STORAGE_PREFIX.returns}/${ownerId}/${returnId}.${ext}`;
 
 /** Annotated copy of a document showing where its zones fall. Regenerated on demand. */
 export const previewPdfPath = (ownerId: string, documentId: string): string =>

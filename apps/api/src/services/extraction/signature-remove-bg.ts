@@ -98,10 +98,27 @@ export class SignatureRemoveBgProvider implements ImageExtractionProvider {
         steps?: Array<{ effect: string; value: number | string }>;
       };
       if (!body.mode) return null;
-      // The service documents `steps` as an array on the way out but expects the
-      // compact "effect:value,effect:value" form on the way in.
+      /**
+       * Drop the engine's own smoothing, whatever /analyze asked for.
+       *
+       * The engine's `smoothing` does not soften the edge of the mask, it
+       * blurs the whole mark: measured on a real capture it took mean opacity
+       * from 246 to 96, which is precisely the washed-out cutout users
+       * complain about — grey strokes over a faint haze instead of ink. It
+       * also defeats the trim, because a frame that is 40% opaque everywhere
+       * has no transparent border to cut away.
+       *
+       * The edge gradient a stamped signature needs is produced afterwards, by
+       * `smoothEdges`, where it can be confined to the alpha channel and to the
+       * boundary. So the engine is asked for a crisp mask and nothing else.
+       * /analyze is still worth calling — its threshold and mode are per-image
+       * and good — but this one step has to be overridden every time, since the
+       * service keeps proposing it.
+       */
       const steps = (body.steps ?? [])
+        .filter((s) => s.effect !== 'smoothing')
         .map((s) => `${s.effect}:${s.value}`)
+        .concat('smoothing:0')
         .join(',');
       return { mode: body.mode, steps };
     } catch {

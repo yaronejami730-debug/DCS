@@ -39,7 +39,7 @@ export const FoldersPage = () => {
   return (
     <Page
       title="Dossiers"
-      description="Un dossier regroupe les documents envoyés ensemble à un appareil."
+      description="Un dossier regroupe les documents signés ensemble, par un même lien."
       actions={<Button onClick={() => setCreating(true)}>Nouveau dossier</Button>}
     >
       {isLoading ? (
@@ -48,7 +48,7 @@ export const FoldersPage = () => {
         <Card>
           <EmptyState
             title="Aucun dossier"
-            description="Créez un dossier, importez vos PDF, puis envoyez-le à un iPhone."
+            description="Créez un dossier, importez vos PDF, puis partagez un lien de signature."
             action={<Button onClick={() => setCreating(true)}>Nouveau dossier</Button>}
           />
         </Card>
@@ -62,7 +62,7 @@ export const FoldersPage = () => {
                   <p className="mt-0.5 text-xs text-ink-400">
                     DOSSIER {folderReference(folder.reference)} · {folder.documents?.length ?? 0}{' '}
                     document(s)
-                    {folder.device ? ` · ${folder.device.name}` : ' · aucun appareil'} ·{' '}
+                    {' · '}
                     {formatDate(folder.createdAt)}
                   </p>
                 </Link>

@@ -2,7 +2,7 @@
   "name": "scansign",
   "private": true,
   "version": "1.0.0",
-  "description": "Scan&Sign — distribute PDFs to iPhones, capture signature/stamp from a photo, re-inject them into the PDF.",
+  "description": "Scan&Sign — distribute PDFs from a console, collect a signature by shareable link, re-inject it into the PDF.",
   "license": "MIT",
   "packageManager": "pnpm@10.30.3",
   "engines": {
@@ -10,26 +10,32 @@
   },
   "scripts": {
     "prestart": "node tools/preflight.mjs",
-    "start": "pnpm --parallel --filter @scansign/api --filter @scansign/admin --filter @scansign/mobile dev",
-    "dev": "pnpm --parallel --filter @scansign/api --filter @scansign/admin dev",
+    "start": "pnpm --parallel --filter @scansign/api --filter @scansign/admin --filter @scansign/signer dev",
+    "dev": "pnpm --parallel --filter @scansign/api --filter @scansign/admin --filter @scansign/signer dev",
     "dev:api": "pnpm --filter @scansign/api dev",
     "dev:admin": "pnpm --filter @scansign/admin dev",
-    "dev:mobile": "pnpm --filter @scansign/mobile start",
-    "dev:mobile:clear": "pnpm --filter @scansign/mobile start:clear",
-    "build": "pnpm --filter @scansign/api build && pnpm --filter @scansign/admin build",
+    "dev:signer": "pnpm --filter @scansign/signer dev",
+    "build": "pnpm --filter @scansign/api build && pnpm --filter @scansign/admin build && pnpm --filter @scansign/signer build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
     "extractor:up": "docker compose -f services/signature-remove-bg/docker-compose.yml up -d",
     "extractor:down": "docker compose -f services/signature-remove-bg/docker-compose.yml down",
     "extractor:logs": "docker compose -f services/signature-remove-bg/docker-compose.yml logs -f",
+    "rembg:serve": "services/rembg/.venv/bin/rembg s --host 127.0.0.1 --port 7001 --no-ui",
+    "rembg:up": "docker compose -f services/rembg/docker-compose.yml up -d",
+    "rembg:down": "docker compose -f services/rembg/docker-compose.yml down",
+    "rembg:logs": "docker compose -f services/rembg/docker-compose.yml logs -f",
     "db:push": "supabase db push",
     "db:reset": "supabase db reset",
     "smoke": "node tools/smoke.mjs",
     "fixtures": "node tools/make-fixtures.mjs",
-    "account": "node apps/api/scripts/account.mjs"
+    "account": "node apps/api/scripts/account.mjs",
+    "variants:lab": "pnpm --filter @scansign/api variants:lab",
+    "restamp": "pnpm --filter @scansign/api restamp"
   },
   "devDependencies": {
+    "pg": "8.16.3",
     "playwright": "^1.62.1",
     "typescript": "5.9.3"
   }

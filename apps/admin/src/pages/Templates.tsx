@@ -11,7 +11,11 @@ import { Page } from '../components/Layout';
 import { Button, Card, EmptyState, Field, Modal, Spinner, formatDate } from '../components/ui';
 
 export const TemplatesPage = () => {
-  const { data, isLoading } = useTemplates();
+  // One-off configurations are hidden by default — that is the whole point of
+  // the distinction — but they stay one click away, so nothing an operator
+  // configured ever becomes unreachable.
+  const [showOneOff, setShowOneOff] = useState(false);
+  const { data, isLoading } = useTemplates(showOneOff);
   const remove = useDeleteTemplate();
   const [downloading, setDownloading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +62,20 @@ export const TemplatesPage = () => {
     <Page
       title="Templates"
       description="Un template décrit où placer la signature, le tampon et la mention dans un type de document."
-      actions={<Button onClick={() => setCreating(true)}>Nouveau template</Button>}
+      actions={
+        <>
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-600">
+            <input
+              type="checkbox"
+              checked={showOneOff}
+              onChange={(e) => setShowOneOff(e.target.checked)}
+              className="h-4 w-4 rounded border-ink-200 accent-brand-600"
+            />
+            Afficher aussi les configurations à usage unique
+          </label>
+          <Button onClick={() => setCreating(true)}>Nouveau template</Button>
+        </>
+      }
     >
       {error && (
         <Card className="mb-4 border-l-4 border-l-red-500 p-4">
@@ -72,7 +89,7 @@ export const TemplatesPage = () => {
         <Card>
           <EmptyState
             title="Aucun template"
-            description="Créez-en un : donnez-lui un nom, ajoutez le PDF qu’il décrit, puis placez les zones."
+            description="Créez-en un : donnez-lui un nom, ajoutez le PDF qu’il décrit, puis placez les zones. Configurer les zones d’un document ne crée pas de template : cochez « Réutilisable » pour cela."
             action={<Button onClick={() => setCreating(true)}>Nouveau template</Button>}
           />
         </Card>
@@ -88,7 +105,14 @@ export const TemplatesPage = () => {
               return (
                 <li key={template.id} className="flex items-center justify-between gap-4 px-5 py-4">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{template.name}</p>
+                    <p className="flex items-center gap-2 text-sm font-medium">
+                      <span className="truncate">{template.name}</span>
+                      {!template.reusable && (
+                        <span className="shrink-0 rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-normal text-ink-500">
+                          usage unique
+                        </span>
+                      )}
+                    </p>
                     <p className="mt-0.5 text-xs text-ink-400">
                       {signatures} signature(s) · {stamps} tampon(s)
                       {mentions > 0 ? ` · ${mentions} mention(s)` : ''}

@@ -87,15 +87,14 @@ describe('realtime socket', () => {
 
     const received = nextMessage(socket);
     publish('user-1', {
-      type: 'folder.sent',
+      type: 'folder.shared',
       folderId: 'folder-9',
-      deviceId: 'device-1',
       name: 'Contrat',
     });
 
     expect(await received).toEqual({
       type: 'event',
-      event: { type: 'folder.sent', folderId: 'folder-9', deviceId: 'device-1', name: 'Contrat' },
+      event: { type: 'folder.shared', folderId: 'folder-9', name: 'Contrat' },
     });
     socket.close();
   });
@@ -187,24 +186,19 @@ describe('realtime socket', () => {
 describe('notification content for live events', () => {
   // The phone raises its own alert from the socket, so the mapping from event
   // to notification is what decides whether the signer hears about a document.
-  // It lives in the mobile app, but the contract is shared, so the shapes that
-  // must produce an alert are pinned here.
-  it('names every event the signer must be told about', () => {
-    const mustAlert: RealtimeEvent[] = [
-      { type: 'folder.sent', folderId: 'f', deviceId: 'd', name: 'Contrat' },
+  // The console reacts to these, so the shapes are pinned here: every event
+  // must name the folder it is about, or the console cannot decide what to
+  // refetch.
+  it('names every event the console must react to', () => {
+    const mustRefresh: RealtimeEvent[] = [
+      { type: 'folder.shared', folderId: 'f', name: 'Contrat' },
       { type: 'folder.updated', folderId: 'f', status: 'completed' },
       { type: 'folder.updated', folderId: 'f', status: 'error' },
-    ];
-    for (const event of mustAlert) {
-      expect(event).toHaveProperty('folderId');
-    }
-
-    // …and the ones that would only be noise while they are looking at it.
-    const quiet: RealtimeEvent[] = [
       { type: 'folder.updated', folderId: 'f', status: 'delivered' },
       { type: 'folder.updated', folderId: 'f', status: 'in_progress' },
-      { type: 'device.updated', deviceId: 'd' },
     ];
-    expect(quiet).toHaveLength(3);
+    for (const event of mustRefresh) {
+      expect(event).toHaveProperty('folderId');
+    }
   });
 });

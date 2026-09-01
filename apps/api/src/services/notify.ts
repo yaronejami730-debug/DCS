@@ -1,59 +1,62 @@
 import { ERROR_CODE_LABEL, type ErrorCode } from '@scansign/shared';
 import { db } from '../lib/supabase.js';
-import { sendPush } from './push.js';
 import { publish } from '../lib/realtime.js';
 
 /**
- * Every notification the product sends, in one place.
+ * Everything the system tells the operator, in one place.
  *
- * Two rules shape the wording:
+ * These used to be Expo push notifications aimed at a registered phone. There
+ * is no phone any more: the signer follows a link in a browser, and the only
+ * party who needs telling after the fact is the operator — who is looking at
+ * the console, where the live socket already delivers the news instantly.
+ *
+ * So a notification is now a *record*, not a delivery. It lands in
+ * `notifications` for the console's activity feed and its history, and the
+ * socket does the waking-up. That removes the whole class of failure where a
+ * finished signature was reported as failed because a push token had gone
+ * stale.
+ *
+ * Two rules still shape the wording:
  *
  *  1. Say what happened AND what to do about it. "Échec du détourage" tells the
- *     signer nothing they can act on; "la signature n'a pas pu être détourée —
- *     reprenez la photo sur une feuille bien éclairée" does.
- *  2. Never send a notification the recipient cannot act on or does not care
- *     about. A device does not need telling that its own upload succeeded.
- *
- * Delivery is best-effort by design: a failed push must never fail the work it
- * was reporting on. Everything is recorded in `notifications` either way, so
- * the console can show what was sent and what could not be.
+ *     operator nothing they can act on; "la signature n'a pas pu être détourée —
+ *     demandez une nouvelle photo sur une feuille bien éclairée" does.
+ *  2. Never record a notification nobody will read. Noise in the feed is what
+ *     makes the one that matters invisible.
  */
 
 interface FolderRef {
   id: string;
   name: string;
-  deviceId: string | null;
 }
 
 const loadFolder = async (folderId: string): Promise<FolderRef | null> => {
   const { data } = await db
     .from('folders')
-    .select('id, name, device_id')
+    .select('id, name')
     .eq('id', folderId)
-    .maybeSingle<{ id: string; name: string; device_id: string | null }>();
-  return data ? { id: data.id, name: data.name, deviceId: data.device_id } : null;
+    .maybeSingle<FolderRef>();
+  return data ?? null;
 };
 
-/** A document is waiting on the device. Sent when the console presses Envoyer. */
-export const notifyFolderSent = async (
-  ownerId: string,
-  folderId: string,
-  documentCount: number,
-): Promise<void> => {
-  const folder = await loadFolder(folderId);
-  if (!folder) return;
-
-  await sendPush({
-    ownerId,
-    deviceId: folder.deviceId,
-    folderId,
-    title: 'Nouveau document à signer',
-    body:
-      documentCount > 1
-        ? `${folder.name} — ${documentCount} documents vous attendent. Ouvrez pour signer.`
-        : `${folder.name} vous attend. Ouvrez pour signer.`,
-    data: { kind: 'folder.sent' },
-  });
+/** Write to the feed. Never throws: reporting must not fail the work reported. */
+const record = async (entry: {
+  ownerId: string;
+  folderId: string | null;
+  title: string;
+  body: string;
+}): Promise<void> => {
+  try {
+    await db.from('notifications').insert({
+      owner_id: entry.ownerId,
+      folder_id: entry.folderId,
+      title: entry.title,
+      body: entry.body,
+      status: 'recorded',
+    });
+  } catch {
+    /* the feed loses a line; the signature is unaffected */
+  }
 };
 
 /** Everything in the folder is signed. */
@@ -65,36 +68,37 @@ export const notifyFolderCompleted = async (
   const folder = await loadFolder(folderId);
   if (!folder) return;
 
-  await sendPush({
+  await record({
     ownerId,
-    deviceId: folder.deviceId,
     folderId,
-    title: 'Document signé',
+    title: 'Documents signés',
     body:
       documentCount > 1
-        ? `${folder.name} — ${documentCount} documents signés. Ils sont disponibles dans votre espace web.`
-        : `${folder.name} est signé. Il est disponible dans votre espace web.`,
-    data: { kind: 'folder.completed' },
+        ? `${folder.name} — ${documentCount} documents signés, prêts à télécharger.`
+        : `${folder.name} est signé, prêt à télécharger.`,
   });
 };
 
 /**
  * Something went wrong. The body has to say what the person can do next,
  * because a code on its own leaves them stuck.
+ *
+ * The advice is addressed to the operator now, not the signer: the operator is
+ * the one reading this, and what they can do is ask for another photo.
  */
 const RECOVERY: Partial<Record<ErrorCode, string>> = {
   SIGNATURE_EXTRACTION_FAILED:
-    'Reprenez la photo sur une feuille blanche, bien à plat et bien éclairée, puis recadrez la signature.',
+    'Demandez une nouvelle photo sur une feuille blanche, bien à plat et bien éclairée.',
   STAMP_EXTRACTION_FAILED:
-    'Le tampon n’a pas été détecté. Reprenez la photo avec un tampon bien encré et un cadrage plus large.',
+    'Le tampon n’a pas été détecté. Demandez une photo avec un tampon bien encré et un cadrage plus large.',
   MENTION_EXTRACTION_FAILED:
-    'La mention n’a pas été détectée. Réécrivez « Lu et approuvé » plus lisiblement et reprenez la photo.',
-  IMAGE_PROCESSING_FAILED: 'La photo est illisible. Reprenez-la avec plus de lumière.',
+    'La mention n’a pas été détectée. Demandez une écriture plus lisible de « Lu et approuvé ».',
+  IMAGE_PROCESSING_FAILED: 'La photo est illisible. Demandez-en une avec plus de lumière.',
   TEMPLATE_NOT_FOUND:
-    'Ce document n’a pas de zones de signature. Configurez-les dans la console avant de l’envoyer.',
+    'Ce document n’a pas de zones de signature. Configurez-les avant de partager le lien.',
   TEMPLATE_ZONE_OUT_OF_RANGE:
     'Une zone du template sort du document. Corrigez-la dans l’éditeur de template.',
-  PDF_GENERATION_FAILED: 'Le PDF signé n’a pas pu être écrit. Réessayez la signature.',
+  PDF_GENERATION_FAILED: 'Le PDF signé n’a pas pu être écrit. Relancez la signature.',
   STORAGE_FAILED: 'Le stockage est indisponible. Réessayez dans un instant.',
   FILE_TOO_LARGE: 'Le fichier est trop volumineux.',
   INVALID_PDF: 'Ce PDF est illisible. Réexportez-le puis réimportez-le.',
@@ -111,42 +115,20 @@ export const notifyFolderFailed = async (
   const what = ERROR_CODE_LABEL[code] ?? 'Une erreur est survenue';
   const next = RECOVERY[code] ?? 'Ouvrez le dossier pour réessayer.';
 
-  await sendPush({
+  await record({
     ownerId,
-    deviceId: folder.deviceId,
     folderId,
     title: `${folder.name} — action requise`,
     body: `${what}. ${next}`,
-    data: { kind: 'folder.failed', code },
   });
-};
-
-/** The device opened the folder. Useful to the console, not to the phone. */
-export const notifyFolderDelivered = async (
-  ownerId: string,
-  folderId: string,
-): Promise<void> => {
-  const folder = await loadFolder(folderId);
-  if (!folder) return;
-
-  // Recorded for the console's activity feed; deliberately not pushed to the
-  // device, which is the one that just did it.
-  await db.from('notifications').insert({
-    owner_id: ownerId,
-    device_id: folder.deviceId,
-    folder_id: folderId,
-    title: 'Dossier reçu',
-    body: `${folder.name} a été ouvert sur l’appareil.`,
-    status: 'recorded',
-  });
-  publish(ownerId, { type: 'folder.updated', folderId, status: 'delivered' });
+  publish(ownerId, { type: 'folder.updated', folderId, status: 'error' });
 };
 
 /** The console's notification list. */
 export const listNotifications = async (ownerId: string, limit = 50) => {
   const { data } = await db
     .from('notifications')
-    .select('id, title, body, status, error, created_at, folder_id, device_id')
+    .select('id, title, body, status, error, created_at, folder_id')
     .eq('owner_id', ownerId)
     .order('created_at', { ascending: false })
     .limit(limit);

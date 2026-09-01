@@ -23,7 +23,7 @@ export const useRealtime = (): { connected: boolean } => {
 
     const handle = (event: RealtimeEvent) => {
       switch (event.type) {
-        case 'folder.sent':
+        case 'folder.shared':
         case 'folder.updated':
         case 'folder.deleted':
           invalidate('folders', 'folder', 'dashboard', 'activity');
@@ -33,9 +33,6 @@ export const useRealtime = (): { connected: boolean } => {
           break;
         case 'session.updated':
           invalidate('folder', 'folders', 'dashboard', 'activity');
-          break;
-        case 'device.updated':
-          invalidate('devices', 'dashboard');
           break;
       }
     };

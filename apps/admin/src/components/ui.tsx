@@ -111,11 +111,24 @@ export const ErrorNote = ({ code, message }: { code?: string | null; message?: s
   );
 };
 
-export const Spinner = () => (
-  <div className="flex justify-center py-12">
-    <span className="h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-600" />
-  </div>
-);
+const SPIN = 'inline-block animate-spin rounded-full border-2 border-ink-200 border-t-brand-600';
+
+/**
+ * Two shapes from one component.
+ *
+ * Bare, it is a page-level spinner: centred, with the vertical breathing room a
+ * loading screen wants. Given a `className` it is an inline one — sized by the
+ * caller and with no padding of its own, because a `py-12` wrapper inside a
+ * 46px button is what turns a neat spinner into a broken layout.
+ */
+export const Spinner = ({ className }: { className?: string } = {}) =>
+  className ? (
+    <span className={`${SPIN} ${className}`} />
+  ) : (
+    <div className="flex justify-center py-12">
+      <span className={`${SPIN} h-6 w-6`} />
+    </div>
+  );
 
 export const EmptyState = ({
   title,
@@ -138,23 +151,41 @@ export const Modal = ({
   title,
   onClose,
   children,
+  /**
+   * 'wide' gives the dialog the room a document needs: a form reads better
+   * narrow, but a PDF at 400px is unreadable, which defeats the point of
+   * looking at it.
+   */
+  size = 'default',
+  actions,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
+  size?: 'default' | 'wide';
+  /** Rendered in the header, next to the close button. */
+  actions?: ReactNode;
 }) => {
   if (!open) return null;
+  const wide = size === 'wide';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
+      <div
+        className={`flex w-full flex-col rounded-xl bg-white p-5 shadow-xl ${
+          wide ? 'max-h-[92vh] max-w-5xl' : 'max-w-md'
+        }`}
+      >
+        <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{title}</h2>
-          <button onClick={onClose} className="rounded p-1 text-ink-400 hover:bg-ink-100" aria-label="Fermer">
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            {actions}
+            <button onClick={onClose} className="rounded p-1 text-ink-400 hover:bg-ink-100" aria-label="Fermer">
+              ✕
+            </button>
+          </div>
         </div>
-        {children}
+        <div className={wide ? 'min-h-0 flex-1 overflow-y-auto' : undefined}>{children}</div>
       </div>
     </div>
   );

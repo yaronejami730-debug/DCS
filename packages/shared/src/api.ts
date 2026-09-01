@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { CAPTURE_MODE, DEVICE_PLATFORM, ZONE_TYPE } from './status.js';
+import { CAPTURE_MODE, DOCUMENT_ROLE, SHARE_SCOPE, ZONE_TYPE } from './status.js';
 import type { ZoneType } from './status.js';
+import type { NormalizedRect } from './geometry.js';
 
 /**
  * Request contracts. The API validates every body against these; the clients
@@ -39,35 +40,61 @@ export interface AuthSession {
   user: { id: string; email: string; displayName: string | null };
 }
 
-// --- devices --------------------------------------------------------------
-
-export const registerDeviceSchema = z.object({
-  name: z.string().min(1).max(80),
-  platform: z.enum(DEVICE_PLATFORM).default('unknown'),
-  pushToken: z.string().min(1).max(255).nullable().optional(),
-  /** Stable per-install id so a reinstall-free relaunch reuses the same row. */
-  installationId: z.string().min(8).max(128),
-});
-export type RegisterDeviceInput = z.infer<typeof registerDeviceSchema>;
-
-export const updateDeviceSchema = z.object({
-  name: z.string().min(1).max(80).optional(),
-  pushToken: z.string().min(1).max(255).nullable().optional(),
-});
-export type UpdateDeviceInput = z.infer<typeof updateDeviceSchema>;
-
 // --- folders --------------------------------------------------------------
+
+/**
+ * Where an imported PDF goes.
+ *
+ * Asked on every import rather than inferred: the two look identical as files,
+ * and guessing wrong either stamps a signature onto a blank capture sheet or
+ * leaves a contract waiting for one.
+ */
+export const importDocumentsSchema = z.object({
+  role: z.enum(DOCUMENT_ROLE).default('to_sign'),
+});
+export type ImportDocumentsInput = z.infer<typeof importDocumentsSchema>;
 
 export const createFolderSchema = z.object({
   name: z.string().min(1).max(160),
-  deviceId: z.string().uuid().nullable().optional(),
 });
 export type CreateFolderInput = z.infer<typeof createFolderSchema>;
 
-export const sendFolderSchema = z.object({
-  deviceId: z.string().uuid(),
+/**
+ * Mint a share link for a folder.
+ *
+ * `expiresInDays: null` means no expiry, which the console has to ask for
+ * explicitly — an unbounded capability URL is a decision, not a default.
+ */
+export const createShareLinkSchema = z.object({
+  label: z.string().min(1).max(120).nullable().optional(),
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
+  scope: z.enum(SHARE_SCOPE).default('signer'),
+  /** Empty or omitted covers the whole folder. See ShareLink.documentIds. */
+  documentIds: z.array(z.string().uuid()).max(200).optional(),
+  /** Ask the technician for their location on return. See ShareLink.requireLocation. */
+  requireLocation: z.boolean().default(false),
 });
-export type SendFolderInput = z.infer<typeof sendFolderSchema>;
+export type CreateShareLinkInput = z.infer<typeof createShareLinkSchema>;
+
+/**
+ * A location a browser reported, with the person's consent.
+ *
+ * Bounded to real Earth coordinates so a malformed or spoofed payload is
+ * rejected at the edge rather than stored as evidence. Accuracy is the browser's
+ * own metres-of-uncertainty figure; it is advisory and may be absent.
+ */
+export const geolocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracy: z.number().min(0).max(100_000).nullable().optional(),
+});
+export type GeolocationInput = z.infer<typeof geolocationSchema>;
+
+/** Change which documents an existing link covers, without reissuing it. */
+export const updateShareLinkSchema = z.object({
+  documentIds: z.array(z.string().uuid()).max(200),
+});
+export type UpdateShareLinkInput = z.infer<typeof updateShareLinkSchema>;
 
 // --- templates ------------------------------------------------------------
 
@@ -99,6 +126,54 @@ export const assignTemplateSchema = z.object({
   templateId: z.string().uuid(),
 });
 export type AssignTemplateInput = z.infer<typeof assignTemplateSchema>;
+
+/**
+ * Move or resize the marks on ONE already-signed document.
+ *
+ * Same geometry as a template zone, but scoped to a single document, so a
+ * signature that landed on a printed line can be nudged without moving it on
+ * every other document the template describes. The signature itself never
+ * changes: regeneration reuses the stored cutout at its recorded variant.
+ */
+export const adjustPlacementSchema = z.object({
+  zones: z.array(templateZoneSchema).min(1).max(64),
+});
+export type AdjustPlacementInput = z.infer<typeof adjustPlacementSchema>;
+
+/** One document on the folder comparison screen. */
+export interface ComparisonItem {
+  documentId: string;
+  filename: string;
+  /** False for a document the folder holds but nobody has signed yet. */
+  signed: boolean;
+  pageCount: number;
+  /** Which variant of the marks this document carries. */
+  variantIndex: number;
+  /** False when it was inferred from the document's rank rather than recorded. */
+  variantRecorded: boolean;
+  /** Short-lived link: the signed PDF when there is one, the original otherwise. */
+  url: string;
+  /** The same document before signing — subtracted to isolate the mark. */
+  originalUrl: string;
+  /** Where the marks were stamped. Empty on an unsigned document. */
+  zones: Array<{ page: number; type: ZoneType; rect: NormalizedRect; index: number }>;
+}
+
+export interface FolderComparison {
+  folderId: string;
+  items: ComparisonItem[];
+  total: number;
+}
+
+/** Where a document's marks currently sit, and whether that is its own doing. */
+export interface DocumentPlacement {
+  documentId: string;
+  /** `document` once an operator has adjusted it; `template` until then. */
+  source: 'document' | 'template';
+  zones: Array<{ page: number; type: ZoneType; rect: NormalizedRect; index: number }>;
+  /** Null when the document can be adjusted; otherwise why it cannot. */
+  blockedReason: string | null;
+}
 
 // --- signing sessions -----------------------------------------------------
 
@@ -172,9 +247,30 @@ export type StartSessionInput = z.infer<typeof startSessionSchema>;
  * Lets the signer judge a faint stamp or a shadowed photo while they can still
  * widen the box or retake it.
  */
+/**
+ * Which engine cuts the mark out.
+ *
+ *   local     the container on our own server. Free, fast, and the photograph
+ *             never leaves the machine — so it is the default and the only one
+ *             the signing pipeline itself ever uses.
+ *   removebg  the hosted remove.bg API. Metered, and it uploads the mark to a
+ *             third party, so it exists only as a preview an operator asks for
+ *             deliberately, to compare the two on the same crop.
+ */
+export const EXTRACTION_ENGINE = ['rembg', 'local', 'removebg'] as const;
+export type ExtractionEngine = (typeof EXTRACTION_ENGINE)[number];
+
+export const EXTRACTION_ENGINE_LABEL: Record<ExtractionEngine, string> = {
+  rembg: 'rembg (local)',
+  local: 'Moteur simple',
+  removebg: 'remove.bg',
+};
+
 export const previewCutoutSchema = z.object({
   mark: z.enum(ZONE_TYPE),
   region: normalizedRectSchema,
+  /** Omit to use whichever engine the server is configured to sign with. */
+  engine: z.enum(EXTRACTION_ENGINE).optional(),
 });
 export type PreviewCutoutInput = z.infer<typeof previewCutoutSchema>;
 
@@ -184,6 +280,14 @@ export interface CutoutPreview {
   height: number;
   /** Transparent PNG as a data URL — small, and belongs to nothing yet. */
   dataUrl: string;
+  /** Which engine produced it, so the two can be told apart on screen. */
+  engine: ExtractionEngine;
+  /**
+   * True when the chosen engine could not answer and the other one stepped in.
+   * Worth showing: the cutout on screen is not from the engine that was asked
+   * for, and the reason is usually actionable — no credits, service down.
+   */
+  fellBack?: boolean;
 }
 
 /** Which marks a folder's templates actually call for, and how many of each. */

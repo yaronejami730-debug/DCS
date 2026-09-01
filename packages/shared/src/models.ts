@@ -1,6 +1,7 @@
 import type {
-  DevicePlatform,
+  DocumentRole,
   DocumentStatus,
+  ShareScope,
   ErrorCode,
   FolderStatus,
   SessionStatus,
@@ -17,17 +18,81 @@ export interface User {
   createdAt: string;
 }
 
-export interface Device {
+/**
+ * A capability URL onto exactly one folder.
+ *
+ * The token IS the authorisation: whoever holds the link can photograph their
+ * signature into this folder and nothing else — no account, no password, no
+ * visibility onto any other folder or document. That is the whole point. An
+ * external signer receives a link by email or SMS and signs; asking them to
+ * open an account first is the friction the link exists to remove.
+ *
+ * It is therefore treated like any other bearer secret: long random token,
+ * revocable at any moment, and expiring on its own so a link forwarded once
+ * does not stay live forever.
+ */
+export interface ShareLink {
   id: string;
-  ownerId: string;
-  name: string;
-  platform: DevicePlatform;
-  /** Expo push token. Null until the user grants notification permission. */
-  pushToken: string | null;
-  lastSeenAt: string | null;
+  folderId: string;
+  /** The secret. Only ever travels inside the link itself. */
+  token: string;
+  /** Ready-to-send address, assembled by the API from SIGNER_PUBLIC_URL. */
+  url: string;
+  label: string | null;
+  scope: ShareScope;
+  /**
+   * The documents this link covers.
+   *
+   * Empty means the whole folder, including documents added later — which is
+   * what "sign this folder" means and what every link did before subsets
+   * existed. A non-empty list is exact: those documents and no others.
+   */
+  documentIds: string[];
+  /**
+   * The link asks the technician for their location when they return the
+   * signed pages. Consented proof of presence — the browser prompts, they
+   * grant or refuse. Off by default.
+   */
+  requireLocation: boolean;
   createdAt: string;
-  /** Derived: lastSeenAt within ONLINE_WINDOW_MS. */
-  online: boolean;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  lastOpenedAt: string | null;
+  openedCount: number;
+  /** Derived: not revoked and not past its expiry. */
+  active: boolean;
+}
+
+/**
+ * A signed page a technician sent back through a link.
+ *
+ * The raw thing they returned, before anyone has decided what is in it — the
+ * operator crops the marks out of it afterwards, on the console.
+ */
+export interface ShareLinkReturn {
+  id: string;
+  linkId: string;
+  folderId: string;
+  /** Which document this is a signed copy of, when the technician said so. */
+  documentId: string | null;
+  filename: string;
+  contentType: string;
+  byteSize: number;
+  /** Pixel size for an image; null for a PDF, rasterised at crop time. */
+  width: number | null;
+  height: number | null;
+  pageCount: number | null;
+  /** Set once the operator has cropped marks out of it. */
+  handledAt: string | null;
+  /**
+   * Where the technician was when they sent this, if the link asked and they
+   * allowed it. Null throughout when it did not ask, or they declined — a
+   * refusal is a valid outcome, not a failure.
+   */
+  location: { latitude: number; longitude: number; accuracy: number | null; at: string } | null;
+  createdAt: string;
+  /** Short-lived signed URL, present when the API was asked for one. */
+  url?: string;
 }
 
 export interface Folder {
@@ -36,7 +101,6 @@ export interface Folder {
   /** Short human reference shown as DOSSIER #000123. */
   reference: number;
   name: string;
-  deviceId: string | null;
   status: FolderStatus;
   errorCode: ErrorCode | null;
   errorMessage: string | null;
@@ -44,12 +108,15 @@ export interface Folder {
   deliveredAt: string | null;
   completedAt: string | null;
   documents?: Document[];
-  device?: Pick<Device, 'id' | 'name'> | null;
+  /** The active link, when the console asked for it. */
+  share?: ShareLink | null;
 }
 
 export interface Document {
   id: string;
   folderId: string;
+  /** What this PDF is for. See DOCUMENT_ROLE. */
+  role: DocumentRole;
   filename: string;
   storagePath: string;
   finalPdfPath: string | null;
@@ -61,6 +128,12 @@ export interface Document {
   errorCode: ErrorCode | null;
   errorMessage: string | null;
   createdAt: string;
+  /**
+   * The session whose cutouts were stamped here. Null on documents signed
+   * before this was tracked, which is exactly when the console must not offer
+   * to reposition the mark: there is no way to know which signature to reuse.
+   */
+  signingSessionId?: string | null;
   template?: Pick<Template, 'id' | 'name'> | null;
 }
 
@@ -98,7 +171,6 @@ export interface Template {
 export interface SigningSession {
   id: string;
   folderId: string;
-  deviceId: string | null;
   status: SessionStatus;
   captureMode: CaptureMode;
   photoPath: string | null;
@@ -127,10 +199,9 @@ export interface AuditLog {
 export interface DashboardStats {
   pendingDocuments: number;
   completedDocuments: number;
-  devicesOnline: number;
-  devicesTotal: number;
+  activeLinks: number;
   errors: number;
 }
 
-/** A device counts as online if it pinged within this window. */
-export const ONLINE_WINDOW_MS = 2 * 60 * 1000;
+/** How long a share link stays usable unless the operator says otherwise. */
+export const SHARE_LINK_TTL_DAYS = 30;

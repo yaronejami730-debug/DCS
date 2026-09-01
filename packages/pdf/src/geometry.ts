@@ -136,6 +136,173 @@ export const containFit = (
 };
 
 /**
+ * How a mark is sized inside the zone drawn for it.
+ *
+ * `containFit` alone gets this wrong in practice, and the measurements say why.
+ * Operators draw a wide, flat box along the signature line — measured on real
+ * templates, zone aspect ratios of 2.5, 3.2 and 7.0 — while an ink cutout is
+ * far less elongated: 1.6 for a signature over a stamp, 4.4 for a handwritten
+ * "Lu et approuvé". Fitting the second inside the first is always limited by
+ * HEIGHT, so the mark filled 100% of the zone's height and only 23-65% of its
+ * width. The width the operator carefully drew was being ignored, and the mark
+ * came out small — sized by the box's thickness rather than by its extent.
+ *
+ * So the width leads. The mark is scaled to fill the zone's width, and its
+ * height follows from its own aspect ratio. Because that can make a squarish
+ * mark taller than a flat box, the height is capped at `maxHeightOverflow`
+ * times the zone height — beyond that the mark would start reaching into the
+ * printed text above and below, which no amount of "correct scale" justifies.
+ * Nothing is ever distorted: the aspect ratio is preserved throughout, and the
+ * result is centred on the zone.
+ */
+export interface MarkFitOptions {
+  /**
+   * Fraction of the zone's width the mark should occupy. Slightly under 1 so a
+   * mark does not touch the edges of the box it was given.
+   */
+  fill?: number;
+  /**
+   * How far the mark's height may exceed the zone's height. 1 reproduces the
+   * old strict contain behaviour.
+   */
+  maxHeightOverflow?: number;
+}
+
+export const DEFAULT_MARK_FIT: Required<MarkFitOptions> = {
+  /**
+   * Fill the drawn width completely. Insetting it "so the mark does not touch
+   * the edges" was tried and dropped: the box IS the operator's statement of
+   * how much room the mark gets, and shrinking it by a few percent both fought
+   * that intent and broke the property that a square mark in a square zone
+   * lands exactly on the zone.
+   */
+  fill: 1,
+  maxHeightOverflow: 1.5,
+};
+
+export const fitMarkInZone = (
+  sourceWidth: number,
+  sourceHeight: number,
+  box: { x: number; y: number; width: number; height: number },
+  options: MarkFitOptions = {},
+): { x: number; y: number; width: number; height: number } => {
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    throw new Error('fitMarkInZone: source must have a positive size');
+  }
+
+  const fill = options.fill ?? DEFAULT_MARK_FIT.fill;
+  const maxHeightOverflow = options.maxHeightOverflow ?? DEFAULT_MARK_FIT.maxHeightOverflow;
+
+  // Width leads: this is the dimension the operator drew deliberately.
+  const byWidth = (box.width * fill) / sourceWidth;
+  // …but never so tall that the mark climbs out of its line into the text.
+  const byHeight = (box.height * maxHeightOverflow) / sourceHeight;
+  const scale = Math.min(byWidth, byHeight);
+
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+
+  return {
+    x: box.x + (box.width - width) / 2,
+    y: box.y + (box.height - height) / 2,
+    width,
+    height,
+  };
+};
+
+/**
+ * How one signing differs from another, applied where it survives.
+ *
+ * The obvious place to vary a mark is the cutout, and it is the wrong one: the
+ * cutout is trimmed to its ink and then fitted into its zone, and those two
+ * steps normalise away precisely a translation and a scale. Measured, a model
+ * that asked for a 6.6% displacement delivered 0.5% to the page — the visible
+ * part had been divided out.
+ *
+ * Applied to the PLACEMENT instead, nothing normalises it afterwards. A mark
+ * 6% smaller stays 6% smaller; one sitting 4% to the left stays there. Which is
+ * what actually distinguishes two signings at a glance: a hand does not land in
+ * the same spot, at the same size, at the same angle, twice.
+ */
+export interface MarkVariation {
+  /**
+   * Multipliers on the fitted size, separately per axis.
+   *
+   * Separate on purpose. A uniform scale makes the mark bigger or smaller; a
+   * slightly different one per axis also changes the SHAPE of every stroke —
+   * loops rounder or narrower, the slant of every upstroke shifted — which is
+   * the "un peu déformée" that makes two signings read as two signings. It
+   * cannot break anything the way a local warp can, because it is one affine
+   * map over the whole mark.
+   */
+  scaleX: number;
+  scaleY: number;
+  /** Shift, as a fraction of the mark's own width and height. */
+  offsetX: number;
+  offsetY: number;
+  /** Tilt in degrees, counter-clockwise, about the mark's centre. */
+  tiltDegrees: number;
+}
+
+export const NO_VARIATION: MarkVariation = {
+  scaleX: 1,
+  scaleY: 1,
+  offsetX: 0,
+  offsetY: 0,
+  tiltDegrees: 0,
+};
+
+/**
+ * Apply a variation to a placement, rotating and scaling about the mark's own
+ * centre so it stays where it was put rather than swinging off its corner.
+ *
+ * pdf-lib rotates a drawn image about its (x, y) anchor — the bottom-left — so
+ * a tilt applied naively also translates the mark by an amount that grows with
+ * its size. Recovering the centre first and re-deriving the anchor for the new
+ * angle keeps the tilt a tilt.
+ */
+export const applyMarkVariation = (
+  placement: ImagePlacement,
+  variation: MarkVariation,
+): ImagePlacement => {
+  const { scaleX, scaleY, offsetX, offsetY, tiltDegrees } = variation;
+  if (scaleX === 1 && scaleY === 1 && offsetX === 0 && offsetY === 0 && tiltDegrees === 0) {
+    return placement;
+  }
+
+  const angle = (placement.rotateDegrees * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  // Where the mark's centre currently is, in PDF user space.
+  const cx = placement.x + (placement.width / 2) * cos - (placement.height / 2) * sin;
+  const cy = placement.y + (placement.width / 2) * sin + (placement.height / 2) * cos;
+
+  const width = placement.width * scaleX;
+  const height = placement.height * scaleY;
+
+  // Offsets are along the mark's own axes, so a mark on a rotated page moves
+  // the way it looks like it should rather than along the paper's edges.
+  const shiftX = offsetX * width;
+  const shiftY = offsetY * height;
+  const movedX = cx + shiftX * cos - shiftY * sin;
+  const movedY = cy + shiftX * sin + shiftY * cos;
+
+  const tilted = placement.rotateDegrees + tiltDegrees;
+  const ta = (tilted * Math.PI) / 180;
+  const tcos = Math.cos(ta);
+  const tsin = Math.sin(ta);
+
+  return {
+    x: movedX - (width / 2) * tcos + (height / 2) * tsin,
+    y: movedY - (width / 2) * tsin - (height / 2) * tcos,
+    width,
+    height,
+    rotateDegrees: tilted,
+  };
+};
+
+/**
  * Map a single point from viewport space (origin top-left, page rotation
  * applied — what the operator sees) to PDF user space (origin bottom-left).
  *
@@ -163,8 +330,13 @@ export const viewportPointToPdfPoint = (
 
 /** What pdf-lib needs to stamp an image: a box plus a counter-clockwise angle. */
 export interface ImagePlacement extends PdfRect {
-  /** Counter-clockwise degrees, as expected by pdf-lib's `degrees()`. */
-  rotateDegrees: 0 | 90 | 180 | 270;
+  /**
+   * Counter-clockwise degrees, as expected by pdf-lib's `degrees()`.
+   *
+   * A page's own rotation is always one of the four right angles; a per-signing
+   * tilt lands it anywhere, so this is a plain number rather than that union.
+   */
+  rotateDegrees: number;
 }
 
 /**
@@ -185,6 +357,8 @@ export const computeImagePlacement = (params: {
   rotation?: PageRotation;
   imageWidth: number;
   imageHeight: number;
+  /** Overrides how the mark is scaled into the zone. See DEFAULT_MARK_FIT. */
+  fit?: MarkFitOptions;
 }): ImagePlacement => {
   const { rect, pageWidth, pageHeight, imageWidth, imageHeight } = params;
   const rotation = params.rotation ?? 0;
@@ -198,9 +372,10 @@ export const computeImagePlacement = (params: {
     height: rect.height * vp.height,
   };
 
-  // 2. fit the image inside the zone, in viewport space, where "width" and
-  //    "height" mean what the reader sees.
-  const fitted = containFit(imageWidth, imageHeight, zone);
+  // 2. size the image inside the zone, in viewport space, where "width" and
+  //    "height" mean what the reader sees. Width-led — see fitMarkInZone for
+  //    why strict contain made every mark come out too small.
+  const fitted = fitMarkInZone(imageWidth, imageHeight, zone, params.fit);
 
   // 3. map the fitted viewport box to pdf-lib draw parameters.
   const dx = fitted.x;

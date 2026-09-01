@@ -20,16 +20,16 @@ const Tile = ({
 
 const ACTION_LABEL: Record<string, string> = {
   'folder.created': 'Dossier créé',
-  'folder.sent': 'Dossier envoyé',
-  'folder.delivered': 'Dossier reçu par l’appareil',
+  'folder.shared': 'Lien de signature créé',
+  'folder.share_revoked': 'Lien de signature révoqué',
+  'folder.delivered': 'Lien de signature ouvert',
   'folder.completed': 'Dossier terminé',
   'folder.failed': 'Dossier en échec',
   'document.imported': 'Document importé',
+  'document.imported_via_link': 'Document reçu par lien',
   'document.signed': 'Document signé',
   'document.failed': 'Document en échec',
   'document.template_assigned': 'Template assigné',
-  'device.registered': 'Appareil enregistré',
-  'device.removed': 'Appareil supprimé',
   'template.created': 'Template créé',
   'template.updated': 'Template modifié',
   'session.photo_uploaded': 'Photo de signature reçue',
@@ -54,9 +54,9 @@ export const DashboardPage = () => {
           <Tile label="Documents en attente" value={stats?.pendingDocuments} />
           <Tile label="Documents terminés" value={stats?.completedDocuments} tone="text-emerald-600" />
           <Tile
-            label="Appareils connectés"
-            value={stats?.devicesOnline}
-            tone={stats?.devicesOnline ? 'text-emerald-600' : 'text-ink-400'}
+            label="Liens actifs"
+            value={stats?.activeLinks}
+            tone={stats?.activeLinks ? 'text-emerald-600' : 'text-ink-400'}
           />
           <Tile
             label="Erreurs"

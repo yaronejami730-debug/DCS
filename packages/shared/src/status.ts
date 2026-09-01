@@ -1,11 +1,11 @@
 /**
- * Status + error vocabulary shared by the API, the admin console and the mobile app.
+ * Status + error vocabulary shared by the API, the console and the signing app.
  * Every value here is persisted in Postgres, so treat them as an append-only enum.
  */
 
 export const FOLDER_STATUS = [
-  'pending', // created by the owner, not yet delivered to a device
-  'delivered', // device fetched it / notification acknowledged
+  'pending', // created by the owner, link not opened yet
+  'delivered', // the signer opened the share link
   'in_progress', // signer started the capture flow
   'processing', // backend is cropping / extracting / generating
   'completed', // every document has a final PDF
@@ -96,11 +96,36 @@ export const marksToCapture = (counts: Partial<Record<ZoneType, number>>): ZoneT
  *  single   — one sheet holding every mark, framed afterwards. Fastest.
  *  per_mark — one photo per mark. Easier to frame, better for a faint stamp.
  */
+/**
+ * How much of a folder a share link exposes.
+ *
+ * 'signer' is the outside technician: capture only, no visibility. 'operator'
+ * is the account holder on their own phone — same flow, but allowed to see the
+ * documents, because it is their folder.
+ */
+/**
+ * What a PDF in a folder is for.
+ *
+ *   to_sign      a contract. Carries zones, receives the marks, and the folder
+ *                is finished when every one of these has a signed PDF.
+ *   for_signing  the sheet the technician prints, signs by hand and photographs
+ *                back. The source of the ink, never a target for it — so it has
+ *                no zones, is never stamped, and never holds the folder open
+ *                waiting for a template it will never have.
+ */
+export const DOCUMENT_ROLE = ['to_sign', 'for_signing'] as const;
+export type DocumentRole = (typeof DOCUMENT_ROLE)[number];
+
+export const DOCUMENT_ROLE_LABEL: Record<DocumentRole, string> = {
+  to_sign: 'À faire signer',
+  for_signing: 'Feuille de signature',
+};
+
+export const SHARE_SCOPE = ['signer', 'operator'] as const;
+export type ShareScope = (typeof SHARE_SCOPE)[number];
+
 export const CAPTURE_MODE = ['single', 'per_mark'] as const;
 export type CaptureMode = (typeof CAPTURE_MODE)[number];
-
-export const DEVICE_PLATFORM = ['ios', 'android', 'unknown'] as const;
-export type DevicePlatform = (typeof DEVICE_PLATFORM)[number];
 
 /** Machine-readable failure reasons surfaced to the owner in the console. */
 export const ERROR_CODE = [

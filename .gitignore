@@ -40,3 +40,7 @@ services/signature-remove-bg/upstream/
 
 # Generated test fixtures and signed output
 tools/fixtures/
+
+# Local scratch + operational dumps
+apps/api/scripts/_*-tmp.*
+backups/

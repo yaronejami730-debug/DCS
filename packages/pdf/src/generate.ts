@@ -1,7 +1,14 @@
 import { PDFDocument, degrees } from 'pdf-lib';
 import type { ErrorCode, NormalizedRect, ZoneType } from '@scansign/shared';
 import { PdfPipelineError } from './errors.js';
-import { computeImagePlacement, normalizeRotation } from './geometry.js';
+import {
+  applyMarkVariation,
+  computeImagePlacement,
+  normalizeRotation,
+  NO_VARIATION,
+  type MarkFitOptions,
+  type MarkVariation,
+} from './geometry.js';
 
 export interface PlacementZone {
   /** 1-based page number. */
@@ -23,6 +30,17 @@ export interface GenerateSignedPdfInput {
   mentionPng?: Uint8Array | null;
   /** Signature and stamp captured together as one mark. */
   combinedPng?: Uint8Array | null;
+  /**
+   * How marks are scaled into their zones. Defaults to DEFAULT_MARK_FIT, which
+   * lets the zone's width lead — see fitMarkInZone.
+   */
+  fit?: MarkFitOptions;
+  /**
+   * How this signing differs from the last: a little larger or smaller, a
+   * little off-centre, a little tilted. One variation for the whole document,
+   * because a hand that signs small signs small on every page of it.
+   */
+  variation?: MarkVariation;
 }
 
 export interface GenerateSignedPdfResult {
@@ -118,14 +136,17 @@ export const generateSignedPdf = async (
       rotation: normalizeRotation(page.getRotation().angle),
       imageWidth: image.width,
       imageHeight: image.height,
+      fit: input.fit,
     });
 
+    const varied = applyMarkVariation(placement, input.variation ?? NO_VARIATION);
+
     page.drawImage(image, {
-      x: placement.x,
-      y: placement.y,
-      width: placement.width,
-      height: placement.height,
-      rotate: degrees(placement.rotateDegrees),
+      x: varied.x,
+      y: varied.y,
+      width: varied.width,
+      height: varied.height,
+      rotate: degrees(varied.rotateDegrees),
     });
     placed += 1;
   }

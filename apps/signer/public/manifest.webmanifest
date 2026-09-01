@@ -1,0 +1,11 @@
+{
+  "name": "Scan&Sign — Signature",
+  "short_name": "Scan&Sign",
+  "description": "Signez vos documents depuis n'importe quel navigateur.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f7fa",
+  "theme_color": "#2f5fe0"
+}

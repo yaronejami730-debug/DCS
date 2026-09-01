@@ -1,0 +1,54 @@
+# rembg — local, free, unmetered background removal (MIT).
+#
+# Why it is here: the hosted alternative bills per image and uploads the
+# photographed mark to a third party, which for a signing product is a real
+# cost on both counts. rembg runs the model on this machine, CPU is enough, and
+# nothing leaves the server or is counted.
+#
+# The model matters more than the service. `isnet-general-use` is the sensible
+# default; `birefnet-general` is markedly better on thin strokes and faint ink —
+# which is exactly what a signature is — at the price of a bigger download and a
+# slower first call. Set REMBG_MODEL on the API side to choose.
+#
+# Port 7001, not the 7000 rembg documents: on macOS 7000 is held by AirPlay
+# Receiver (ControlCenter), which answers 403 to everything and makes rembg look
+# like it is running badly rather than not running at all.
+#
+#   pnpm rembg:up      start
+#   pnpm rembg:logs    follow
+#   pnpm rembg:down    stop
+#
+# Sanity check:  curl -F file=@signature.png http://localhost:7001/api/remove --output cutout.png
+#
+# First start downloads the model weights into the named volume below, so it is
+# slow once and fast afterwards. The volume is what keeps a restart from
+# re-downloading them.
+
+services:
+  rembg:
+    image: danielgatis/rembg:latest
+    container_name: scansign-rembg
+    restart: unless-stopped
+    command: s --host 0.0.0.0 --port 7001
+    ports:
+      - "7001:7001"
+    volumes:
+      - rembg-models:/root/.u2net
+    environment:
+      # Keep the container off the network once the weights are cached; it has
+      # no reason to reach the internet while serving.
+      NUMBA_CACHE_DIR: /tmp
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:7001/api/remove')\" 2>/dev/null || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          # BiRefNet needs real headroom; isnet is comfortable in half of this.
+          memory: 4G
+
+volumes:
+  rembg-models:

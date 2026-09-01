@@ -6,6 +6,7 @@ import {
   generateVariants,
   variantAt,
   variantParamsFor,
+  variantPlacement,
 } from '../src/services/variants.js';
 
 /** A transparent PNG with an opaque diagonal stroke — stands in for ink. */
@@ -137,20 +138,33 @@ describe('variantAt', () => {
 });
 
 describe('fallbackVariantIndex', () => {
-  it('is stable for a document and stays in range', () => {
-    for (const count of [1, 3, 10]) {
-      const index = fallbackVariantIndex('doc-abc', count);
-      expect(index).toBe(fallbackVariantIndex('doc-abc', count));
-      expect(index).toBeGreaterThanOrEqual(0);
-      expect(index).toBeLessThan(count);
+  it('gives every document in a folder its own variant', () => {
+    // The test this replaces asked only that the indices were not ALL the
+    // same, which a hash-modulo-count assignment satisfies while still handing
+    // two documents the same signature. Measured on real folders, three out of
+    // four carried duplicates. Distinctness is the whole property, so it is
+    // the property asserted.
+    for (const size of [1, 2, 3, 4, 10, 40]) {
+      const indices = Array.from({ length: size }, (_, i) => fallbackVariantIndex(i));
+      expect(new Set(indices).size).toBe(size);
     }
   });
 
-  it('spreads documents across the available variants', () => {
-    const seen = new Set(
-      Array.from({ length: 40 }, (_, i) => fallbackVariantIndex(`doc-${i}`, 4)),
+  it('is stable and non-negative', () => {
+    expect(fallbackVariantIndex(3)).toBe(fallbackVariantIndex(3));
+    expect(fallbackVariantIndex(0)).toBe(0);
+    expect(fallbackVariantIndex(-1)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('produces a genuinely different image for each document of a folder', async () => {
+    // The end-to-end property the indices exist to deliver: four documents,
+    // four signatures that are not byte-identical to one another.
+    const signature = await makeHandwriting();
+    const stamped = await Promise.all(
+      [0, 1, 2, 3].map((ordinal) => variantAt(signature, fallbackVariantIndex(ordinal))),
     );
-    expect(seen.size).toBeGreaterThan(1);
+    const distinct = new Set(stamped.map((b) => Buffer.from(b).toString('base64')));
+    expect(distinct.size).toBe(4);
   });
 });
 
@@ -273,5 +287,48 @@ describe('generateVariants', () => {
     expect(previews).toHaveLength(4);
     for (const p of previews) expect(p.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
     expect(new Set(previews.map((p) => p.dataUrl)).size).toBe(4);
+  });
+});
+
+describe('variantPlacement', () => {
+  it('is deterministic, and different documents sit differently', () => {
+    expect(variantPlacement(2)).toEqual(variantPlacement(2));
+    expect(variantPlacement(2)).not.toEqual(variantPlacement(3));
+  });
+
+  it('stays within what a hand actually does', () => {
+    for (let i = 0; i < 40; i++) {
+      const v = variantPlacement(i);
+      // A few percent of size, a few percent off target, a degree or two of
+      // tilt. Wider than this and it reads as carelessness rather than as the
+      // same person signing again.
+      expect(v.scaleX).toBeGreaterThan(0.9);
+      expect(v.scaleX).toBeLessThan(1.1);
+      expect(v.scaleY).toBeGreaterThan(0.9);
+      expect(v.scaleY).toBeLessThan(1.1);
+      expect(Math.abs(v.offsetX)).toBeLessThanOrEqual(0.05);
+      expect(Math.abs(v.offsetY)).toBeLessThanOrEqual(0.05);
+      expect(Math.abs(v.tiltDegrees)).toBeLessThanOrEqual(1.7);
+    }
+  });
+
+  it('varies the proportions, not only the size', () => {
+    // A uniform scale makes a mark bigger; a different scale per axis also
+    // changes the shape of every stroke, which is what makes two signings look
+    // like two signings.
+    const ratios = Array.from({ length: 12 }, (_, i) => {
+      const v = variantPlacement(i);
+      return v.scaleX / v.scaleY;
+    });
+    expect(Math.max(...ratios) - Math.min(...ratios)).toBeGreaterThan(0.02);
+  });
+
+  it('scales with strength, and is bounded above it', () => {
+    const gentle = variantPlacement(1, 0.5);
+    const strong = variantPlacement(1, 2);
+    expect(Math.abs(strong.tiltDegrees)).toBeGreaterThan(Math.abs(gentle.tiltDegrees));
+    // The cap holds however hard it is pushed.
+    const absurd = variantPlacement(1, 100);
+    expect(Math.abs(absurd.tiltDegrees)).toBeLessThanOrEqual(1.6 * 2.5 + 1e-9);
   });
 });

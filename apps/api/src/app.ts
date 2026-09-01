@@ -7,12 +7,12 @@ import { env } from './env.js';
 import { HttpError } from './lib/errors.js';
 import type { AppBindings } from './lib/auth.js';
 import { authRoutes } from './routes/auth.js';
-import { deviceRoutes } from './routes/devices.js';
 import { folderRoutes } from './routes/folders.js';
 import { documentRoutes } from './routes/documents.js';
 import { templateRoutes } from './routes/templates.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { dashboardRoutes } from './routes/dashboard.js';
+import { publicShareRoutes, shareRoutes, shareUploadRoutes } from './routes/share.js';
 import { createExtractionProvider } from './services/extraction/index.js';
 
 export const createApp = () => {
@@ -22,7 +22,6 @@ export const createApp = () => {
   app.use(
     '*',
     cors({
-      // The mobile app sends no Origin header, so it is unaffected by this list.
       origin: (origin) => (env.corsOrigins.includes(origin) ? origin : env.corsOrigins[0] ?? ''),
       allowHeaders: ['Content-Type', 'Authorization'],
       allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -40,8 +39,14 @@ export const createApp = () => {
   });
 
   app.route('/auth', authRoutes);
-  app.route('/devices', deviceRoutes);
   app.route('/folders', folderRoutes);
+  // Share-link management hangs off a folder: /folders/:id/share-links.
+  app.route('/folders', shareRoutes);
+  // The one unauthenticated surface. A signer opening a link has no credential
+  // yet, so the token travels in the path here and in a header everywhere else.
+  app.route('/s', publicShareRoutes);
+  // What a link holder may write back: a PDF into the folder it points at.
+  app.route('/link', shareUploadRoutes);
   app.route('/documents', documentRoutes);
   app.route('/templates', templateRoutes);
   app.route('/dashboard', dashboardRoutes);

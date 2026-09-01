@@ -12,10 +12,10 @@ import { db } from './supabase.js';
 /**
  * Live updates over a WebSocket.
  *
- * Why not Supabase Realtime: the iPhone app holds no Supabase key at all — that
+ * Why not Supabase Realtime: no client holds a Supabase key at all — that
  * is the whole reason it talks only to this API — and handing one out to enable
  * live updates would undo the security model. A socket on our own server keeps
- * the boundary intact and serves the browser and the phone identically.
+ * the boundary intact and serves the console and the signing app identically.
  *
  * Auth is the first frame, not a query parameter: URLs end up in access logs,
  * proxies and crash reports, and an access token has no business there.
@@ -99,7 +99,7 @@ export const attachRealtime = (server: Server): void => {
     socket.on('error', cleanup);
   });
 
-  // Reap sockets whose peer vanished without a close frame — a phone that went
+  // Reap sockets whose peer vanished without a close frame — a laptop that went
   // through a tunnel, a laptop that slept.
   const sweeper = setInterval(() => {
     for (const client of clients) {

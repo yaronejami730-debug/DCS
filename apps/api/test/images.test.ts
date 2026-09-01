@@ -158,3 +158,46 @@ describe('trimTransparentBorder', () => {
     ).rejects.toMatchObject({ code: 'STAMP_EXTRACTION_FAILED' });
   });
 });
+
+/**
+ * A capture that holds no picture. This is not hypothetical: a real session
+ * uploaded an all-black frame, background removal thresholded it into noise,
+ * and the signer got a confetti "signature" followed by an unexplained
+ * processing failure two steps later.
+ */
+describe('blank captures', () => {
+  const solid = async (r: number, g: number, b: number) =>
+    new Uint8Array(
+      await sharp({ create: { width: 240, height: 320, channels: 3, background: { r, g, b } } })
+        .jpeg()
+        .toBuffer(),
+    );
+
+  it('rejects an all-black frame instead of extracting noise from it', async () => {
+    await expect(normalizeCapturePhoto(await solid(0, 0, 0))).rejects.toMatchObject({
+      status: 422,
+      code: 'IMAGE_PROCESSING_FAILED',
+    });
+  });
+
+  it('rejects a frame with no contrast at all', async () => {
+    await expect(normalizeCapturePhoto(await solid(255, 255, 255))).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(normalizeCapturePhoto(await solid(128, 128, 130))).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+
+  it('accepts an ordinary photograph of ink on paper', async () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">
+      <rect width="400" height="300" fill="#efeadf"/>
+      <path d="M 40 220 C 120 60, 200 260, 280 100 S 360 180, 390 140"
+        fill="none" stroke="#232838" stroke-width="9"/>
+    </svg>`;
+    const photo = new Uint8Array(await sharp(Buffer.from(svg)).jpeg().toBuffer());
+    const normalised = await normalizeCapturePhoto(photo);
+    expect(normalised.width).toBe(400);
+    expect(normalised.contentType).toBe('image/jpeg');
+  });
+});

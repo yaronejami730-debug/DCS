@@ -12,6 +12,43 @@ export interface NormalizedPhoto {
 }
 
 /**
+ * Refuse a capture that holds no picture.
+ *
+ * A shutter that fires before the camera has exposed — a finger over the lens,
+ * an app backgrounded mid-capture — uploads a frame that is uniformly black.
+ * Nothing downstream notices: background removal is handed an image with no
+ * separation between ink and paper, thresholds it anyway, and returns a field
+ * of noise. A real session failed exactly this way, and what the signer saw was
+ * a confetti "signature" and, two steps later, an unexplained processing error.
+ *
+ * Both halves of the test are needed. `max` catches the all-black frame, while
+ * the standard deviation catches a frame that is uniformly *something* — a lens
+ * against a desk, a blown-out white — where nothing was photographed either.
+ * The thresholds sit far below any real photograph of ink on paper, which
+ * always spans most of the range.
+ */
+const assertReadableCapture = async (jpeg: Buffer): Promise<void> => {
+  const { channels } = await sharp(jpeg).stats();
+  const brightest = Math.max(...channels.slice(0, 3).map((c) => c.max));
+  const contrast = Math.max(...channels.slice(0, 3).map((c) => c.stdev));
+
+  if (brightest < 24) {
+    throw new HttpError(
+      422,
+      'La photo est entièrement noire. Vérifiez que rien ne masque l’objectif et reprenez la photo.',
+      'IMAGE_PROCESSING_FAILED',
+    );
+  }
+  if (contrast < 4) {
+    throw new HttpError(
+      422,
+      'La photo ne montre aucun contraste : rien de lisible n’a été capturé. Reprenez la photo.',
+      'IMAGE_PROCESSING_FAILED',
+    );
+  }
+};
+
+/**
  * Bake the EXIF orientation into the pixels and re-encode as JPEG.
  *
  * This matters more than it looks: an iPhone photo is stored landscape with an
@@ -26,6 +63,9 @@ export const normalizeCapturePhoto = async (input: Uint8Array): Promise<Normaliz
     const { data, info } = await pipeline
       .jpeg({ quality: 92, mozjpeg: true })
       .toBuffer({ resolveWithObject: true });
+
+    await assertReadableCapture(data);
+
     return {
       bytes: new Uint8Array(data),
       width: info.width,
@@ -33,6 +73,7 @@ export const normalizeCapturePhoto = async (input: Uint8Array): Promise<Normaliz
       contentType: 'image/jpeg',
     };
   } catch (cause) {
+    if (cause instanceof HttpError) throw cause;
     throw new HttpError(
       400,
       "Cette photo n'a pas pu être lue.",

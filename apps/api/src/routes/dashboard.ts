@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { ONLINE_WINDOW_MS, type DashboardStats, type DocumentStatus } from '@scansign/shared';
+import type { DashboardStats, DocumentStatus } from '@scansign/shared';
 import { db } from '../lib/supabase.js';
 import { requireAuth, type AppBindings } from '../lib/auth.js';
 import { listNotifications } from '../services/notify.js';
@@ -16,34 +16,39 @@ const countDocuments = async (ownerId: string, statuses: DocumentStatus[]): Prom
   return count ?? 0;
 };
 
-const countDevices = async (ownerId: string, onlineSince?: string): Promise<number> => {
-  const query = db
-    .from('devices')
+/**
+ * Share links that can still be used right now.
+ *
+ * The tile this feeds replaced "appareils en ligne". It answers the question an
+ * operator actually has — how many signature requests are outstanding — where
+ * the device count only ever answered how many phones had the app installed.
+ */
+const countActiveLinks = async (ownerId: string): Promise<number> => {
+  const now = new Date().toISOString();
+  const { count } = await db
+    .from('folder_share_links')
     .select('id', { count: 'exact', head: true })
-    .eq('owner_id', ownerId);
-  const { count } = await (onlineSince ? query.gte('last_seen_at', onlineSince) : query);
+    .eq('owner_id', ownerId)
+    .is('revoked_at', null)
+    .or(`expires_at.is.null,expires_at.gt.${now}`);
   return count ?? 0;
 };
 
 dashboardRoutes.get('/', async (c) => {
   const user = c.get('user');
-  const since = new Date(Date.now() - ONLINE_WINDOW_MS).toISOString();
 
-  const [pendingDocuments, completedDocuments, errors, devicesTotal, devicesOnline] =
-    await Promise.all([
-      countDocuments(user.id, ['awaiting_template', 'ready', 'processing']),
-      countDocuments(user.id, ['completed']),
-      countDocuments(user.id, ['error']),
-      countDevices(user.id),
-      countDevices(user.id, since),
-    ]);
+  const [pendingDocuments, completedDocuments, errors, activeLinks] = await Promise.all([
+    countDocuments(user.id, ['awaiting_template', 'ready', 'processing']),
+    countDocuments(user.id, ['completed']),
+    countDocuments(user.id, ['error']),
+    countActiveLinks(user.id),
+  ]);
 
   const stats: DashboardStats = {
     pendingDocuments,
     completedDocuments,
     errors,
-    devicesTotal,
-    devicesOnline,
+    activeLinks,
   };
   return c.json(stats);
 });

@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import {
   markPhotoPath,
   photoPath,
@@ -17,7 +17,13 @@ import {
 import { env } from '../env.js';
 import { db } from '../lib/supabase.js';
 import { badRequest, notFound, payloadTooLarge, unsupportedMedia } from '../lib/errors.js';
-import { requireAuth, type AppBindings } from '../lib/auth.js';
+import { forbidden } from '../lib/errors.js';
+import {
+  assertShareScope,
+  canReadDocuments,
+  requireAuthOrShare,
+  type ShareBindings,
+} from '../lib/share.js';
 import { downloadObject, signedUrl, uploadObject } from '../lib/storage.js';
 import { enqueue } from '../lib/queue.js';
 import { audit } from '../lib/audit.js';
@@ -31,16 +37,27 @@ import { createExtractionProvider } from '../services/extraction/index.js';
 import { generateVariants } from '../services/variants.js';
 import { detectInkRegionsSafely } from '../services/detect.js';
 import { processSigningSession } from '../services/processing.js';
-import { loadTemplateZones } from '../services/templates.js';
+import { loadTemplateZones, requiredMarksForFolder } from '../services/templates.js';
 
-export const sessionRoutes = new Hono<AppBindings>();
-sessionRoutes.use('*', requireAuth);
+export const sessionRoutes = new Hono<ShareBindings>();
+
+/**
+ * Two credentials, one surface.
+ *
+ * The operator arrives with an account token; the technician arrives with a
+ * share token, which resolves to the same owner identity so that every
+ * `owner_id` filter below keeps working untouched. What stops a link to folder
+ * A from reaching folder B is `assertShareScope`, called after every lookup
+ * with whatever folder the request actually resolved to. Miss one of those
+ * calls and a link becomes a key to the whole account — which is why they are
+ * not optional and not implicit.
+ */
+sessionRoutes.use('*', requireAuthOrShare);
 
 interface SessionRow {
   id: string;
   folder_id: string;
   owner_id: string;
-  device_id: string | null;
   status: SigningSession['status'];
   capture_mode: CaptureMode;
   photo_path: string | null;
@@ -63,7 +80,6 @@ interface SessionRow {
 const toModel = (row: SessionRow): SigningSession => ({
   id: row.id,
   folderId: row.folder_id,
-  deviceId: row.device_id,
   status: row.status,
   captureMode: row.capture_mode,
   photoPath: row.photo_path,
@@ -84,45 +100,19 @@ const ACCEPTED_IMAGE = ['image/jpeg', 'image/png', 'image/heic', 'image/heif', '
 const loadFolder = async (folderId: string, ownerId: string) => {
   const { data } = await db
     .from('folders')
-    .select('id, device_id, status')
+    .select('id, status')
     .eq('id', folderId)
     .eq('owner_id', ownerId)
-    .maybeSingle<{ id: string; device_id: string | null; status: string }>();
+    .maybeSingle<{ id: string; status: string }>();
   if (!data) throw notFound('Dossier introuvable.');
   return data;
-};
-
-/**
- * Which marks this folder's templates actually call for.
- *
- * The phone asks this before capturing, so the flow has exactly as many steps
- * as the documents need — two for signature + stamp, three when a "Lu et
- * approuvé" is also required — instead of asking for marks nobody wants.
- */
-const requiredMarks = async (folderId: string): Promise<RequiredMarks> => {
-  const { data: documents } = await db
-    .from('documents')
-    .select('template_id')
-    .eq('folder_id', folderId)
-    .returns<Array<{ template_id: string | null }>>();
-
-  const counts: RequiredMarks = { signature: 0, stamp: 0, mention: 0, signature_stamp: 0 };
-  const seen = new Set<string>();
-
-  for (const doc of documents ?? []) {
-    if (!doc.template_id || seen.has(doc.template_id)) continue;
-    seen.add(doc.template_id);
-    for (const zone of await loadTemplateZones(doc.template_id)) {
-      counts[zone.type] += 1;
-    }
-  }
-  return counts;
 };
 
 sessionRoutes.get('/folders/:folderId/required-marks', async (c) => {
   const user = c.get('user');
   const folder = await loadFolder(c.req.param('folderId'), user.id);
-  return c.json(await requiredMarks(folder.id));
+  assertShareScope(c.get('share'), folder.id);
+  return c.json(await requiredMarksForFolder(folder.id));
 });
 
 /** Pull the uploaded image out of a multipart body, with size and type checks. */
@@ -141,6 +131,9 @@ const readUpload = async (body: Record<string, unknown>): Promise<File> => {
   return upload;
 };
 
+/** The request as both entry points see it — one resolved by id, one by token. */
+type SessionContext = Context<ShareBindings>;
+
 /**
  * Start a signing session.
  *
@@ -149,38 +142,71 @@ const readUpload = async (body: Record<string, unknown>): Promise<File> => {
  *   per_mark — the session opens empty and each mark is uploaded separately to
  *              /signing-sessions/:id/photo/:mark.
  */
-sessionRoutes.post('/folders/:folderId/signing-sessions', async (c) => {
+/**
+ * The same thing, addressed by the link instead of by folder id.
+ *
+ * A share link holder must never need — or be handed — the id of the folder
+ * they are signing into: it is the operator's filing reference, and passing it
+ * around invites the client to start using it for other lookups. The folder
+ * comes from the token, which is the only thing that ever authorised the
+ * request in the first place.
+ */
+sessionRoutes.post('/signing-sessions', async (c) => {
+  const share = c.get('share');
+  if (!share) throw forbidden('Cette route est réservée aux liens de signature.');
   const user = c.get('user');
-  const folder = await loadFolder(c.req.param('folderId'), user.id);
+  const folder = await loadFolder(share.folderId, user.id);
+  return startSession(c, folder.id);
+});
+
+const startSession = async (c: SessionContext, folderId: string) => {
+  const user = c.get('user');
 
   const modeParam = c.req.query('captureMode') ?? 'single';
   const parsedMode = startSessionSchema.safeParse({ captureMode: modeParam });
   if (!parsedMode.success) throw badRequest('Mode de capture invalide.');
   const captureMode = parsedMode.data.captureMode;
 
-  const marks = await requiredMarks(folder.id);
+  const marks = await requiredMarksForFolder(folderId);
 
   const { data: session, error } = await db
     .from('signing_sessions')
     .insert({
-      folder_id: folder.id,
+      folder_id: folderId,
       owner_id: user.id,
-      device_id: folder.device_id,
       capture_mode: captureMode,
       status: captureMode === 'single' ? 'awaiting_regions' : 'awaiting_photo',
+      /**
+       * Which link opened this, so processing can stamp only the documents
+       * that link covers.
+       *
+       * It has to be stored now, not re-derived at submission: the subset is a
+       * property of the credential the signer arrived with, and by the time
+       * they submit, minutes later, nothing else ties the two together. Null
+       * when the console started it, which covers the folder.
+       */
+      share_link_id: c.get('share')?.linkId ?? null,
+      /**
+       * Which returned scan this session's photo was cut from, when it was.
+       *
+       * The console starts a session by rasterising one page of a technician's
+       * scan and uploading it as the photo; recording the origin is what lets
+       * anyone later answer "where did this signature actually come from".
+       */
+      return_id: c.req.query('returnId') ?? null,
     })
     .select('*')
     .single<SessionRow>();
   if (error || !session) throw badRequest(error?.message ?? 'Session impossible.', 'UPLOAD_FAILED');
 
-  await db.from('folders').update({ status: 'in_progress' }).eq('id', folder.id);
+  await db.from('folders').update({ status: 'in_progress' }).eq('id', folderId);
 
   // Per-mark capture uploads each photo separately, so there is nothing to
-  // store yet — the phone drives the sequence from here.
+  // store yet — the client drives the sequence from here.
   if (captureMode === 'per_mark') {
     await audit({
       ownerId: user.id,
-      folderId: folder.id,
+      folderId: folderId,
       action: 'session.started',
       metadata: { sessionId: session.id, captureMode },
     });
@@ -207,7 +233,7 @@ sessionRoutes.post('/folders/:folderId/signing-sessions', async (c) => {
 
   await audit({
     ownerId: user.id,
-    folderId: folder.id,
+    folderId: folderId,
     action: 'session.photo_uploaded',
     metadata: { sessionId: session.id, captureMode, width: normalized.width },
   });
@@ -221,6 +247,13 @@ sessionRoutes.post('/folders/:folderId/signing-sessions', async (c) => {
     },
     201,
   );
+};
+
+sessionRoutes.post('/folders/:folderId/signing-sessions', async (c) => {
+  const user = c.get('user');
+  const folder = await loadFolder(c.req.param('folderId'), user.id);
+  assertShareScope(c.get('share'), folder.id);
+  return startSession(c, folder.id);
 });
 
 /**
@@ -240,6 +273,7 @@ sessionRoutes.post('/signing-sessions/:id/photo/:mark', async (c) => {
     .eq('owner_id', user.id)
     .maybeSingle<SessionRow>();
   if (!session) throw notFound('Session introuvable.');
+  assertShareScope(c.get('share'), session.folder_id);
   if (session.capture_mode !== 'per_mark') {
     throw badRequest('Cette session utilise une photo unique.', 'BAD_REQUEST');
   }
@@ -301,10 +335,11 @@ sessionRoutes.post('/signing-sessions/:id/preview-cutout', async (c) => {
     .eq('owner_id', user.id)
     .maybeSingle<SessionRow>();
   if (!session) throw notFound('Session introuvable.');
+  assertShareScope(c.get('share'), session.folder_id);
 
   const parsed = previewCutoutSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw badRequest('Zone invalide.', 'BAD_REQUEST', parsed.error.issues);
-  const { mark, region } = parsed.data;
+  const { mark, region, engine } = parsed.data;
 
   const path =
     session.capture_mode === 'per_mark'
@@ -325,7 +360,11 @@ sessionRoutes.post('/signing-sessions/:id/preview-cutout', async (c) => {
       : { width: session.photo_width, height: session.photo_height };
 
   const crop = await cropNormalizedRegion(photo, region, size.width, size.height);
-  const provider = createExtractionProvider();
+  // The preview is the one place a different engine may be asked for, so the
+  // operator can put the two results side by side on the same crop. Omitted,
+  // it uses whichever engine this server actually signs with.
+  const chosen = engine ?? env.EXTRACTION_ENGINE;
+  const provider = createExtractionProvider(chosen);
   const failure =
     mark === 'stamp'
       ? 'STAMP_EXTRACTION_FAILED'
@@ -346,6 +385,8 @@ sessionRoutes.post('/signing-sessions/:id/preview-cutout', async (c) => {
 
   return c.json({
     mark,
+    engine: chosen,
+    fellBack: extracted.meta?.fellBack === true,
     width: trimmed.width,
     height: trimmed.height,
     dataUrl: `data:image/png;base64,${Buffer.from(trimmed.bytes).toString('base64')}`,
@@ -361,9 +402,20 @@ sessionRoutes.post('/signing-sessions/:id/preview-cutout', async (c) => {
  * committing. Purely cosmetic — it changes how the marks sit on the page, not
  * what the document is.
  */
-/** The documents in this session's folder — one variant will go to each. */
+/**
+ * The documents in this session's folder — one variant will go to each.
+ *
+ * Closed to a *signer* link. It returns filenames, and an outside technician is
+ * not entitled to them: they supply a signature, and which contracts it lands
+ * on is the operator's business. Refused rather than filtered, because there is
+ * no filtered version of this answer that is still useful — even the row count
+ * would say how many documents exist. An operator link passes, because that is
+ * the account holder on their own phone.
+ */
 sessionRoutes.get('/signing-sessions/:id/documents', async (c) => {
   const user = c.get('user');
+  if (!canReadDocuments(c.get('share')))
+    throw forbidden('Ce lien ne donne pas accès aux documents.');
   const { data: session } = await db
     .from('signing_sessions')
     .select('folder_id')
@@ -388,8 +440,19 @@ sessionRoutes.get('/signing-sessions/:id/documents', async (c) => {
   return c.json({ items, total: items.length });
 });
 
+/**
+ * Closed to a signer link, for the same reason as /documents.
+ *
+ * The caller passes a `count`, and the only sensible count is "one per
+ * document" — so answering this for a technician would hand them the size of a
+ * folder they are not allowed to see. For them the variants are produced
+ * server-side at processing time instead, one per document, which is what they
+ * would have chosen anyway.
+ */
 sessionRoutes.post('/signing-sessions/:id/preview-variants', async (c) => {
   const user = c.get('user');
+  if (!canReadDocuments(c.get('share')))
+    throw forbidden('Ce lien ne donne pas accès aux documents.');
   const { data: session } = await db
     .from('signing_sessions')
     .select('*')
@@ -397,6 +460,7 @@ sessionRoutes.post('/signing-sessions/:id/preview-variants', async (c) => {
     .eq('owner_id', user.id)
     .maybeSingle<SessionRow>();
   if (!session) throw notFound('Session introuvable.');
+  assertShareScope(c.get('share'), session.folder_id);
 
   const parsed = generateVariantsSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw badRequest('Zone invalide.', 'BAD_REQUEST', parsed.error.issues);
@@ -441,7 +505,7 @@ sessionRoutes.post('/signing-sessions/:id/preview-variants', async (c) => {
 
 /**
  * The signer has framed every mark. Processing runs off the request so the
- * phone gets an immediate answer and then polls GET /signing-sessions/:id.
+ * client gets an immediate answer and then polls GET /signing-sessions/:id.
  */
 sessionRoutes.post('/signing-sessions/:id/regions', async (c) => {
   const user = c.get('user');
@@ -452,6 +516,7 @@ sessionRoutes.post('/signing-sessions/:id/regions', async (c) => {
     .eq('owner_id', user.id)
     .maybeSingle<SessionRow>();
   if (!session) throw notFound('Session introuvable.');
+  assertShareScope(c.get('share'), session.folder_id);
   if (session.status === 'processing') return c.json(toModel(session), 202);
   if (session.status === 'completed') return c.json(toModel(session));
 
@@ -530,5 +595,6 @@ sessionRoutes.get('/signing-sessions/:id', async (c) => {
     .eq('owner_id', user.id)
     .maybeSingle<SessionRow>();
   if (!data) throw notFound('Session introuvable.');
+  assertShareScope(c.get('share'), data.folder_id);
   return c.json(toModel(data));
 });

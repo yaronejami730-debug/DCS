@@ -1,6 +1,10 @@
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
+import { env } from '../env.js';
 import { HttpError } from '../lib/errors.js';
+import { applyInkWeight } from './synsig/render.js';
+import type { MarkVariation } from '@scansign/pdf';
+import { DEFAULT_RANGE, synthesizeVariant } from './synsig/index.js';
 
 /**
  * Natural variation between repeated placements of the same handwritten mark.
@@ -254,9 +258,70 @@ export const applyVariant = async (
  */
 export const variantSeed = (index: number): string => `variant:${index}`;
 
-/** Variant `index` of a mark. Same index, same image, always. */
-export const variantAt = async (png: Uint8Array, index: number): Promise<Uint8Array> =>
-  applyVariant(png, variantParamsFor(variantSeed(index)));
+/**
+ * How variant `index` sits on the page: its size, its position, its tilt.
+ *
+ * This is where the visible difference between two signings comes from, and it
+ * had to move here to exist at all. Varying the cutout does not work — it is
+ * trimmed to its ink and then fitted into its zone, and those two steps divide
+ * out exactly a scale and a translation, which is why a model asking for 6.6%
+ * of displacement delivered 0.5% to the paper. Applied to the placement,
+ * nothing normalises it afterwards.
+ *
+ * The ranges are what a hand actually does: a few percent of size, a few
+ * percent off the mark it was aiming for, a degree or two of tilt. Deterministic
+ * in the index, like every other part of a variant, so the document can be
+ * regenerated and come back identical.
+ */
+export const variantPlacement = (index: number, strength = 1): MarkVariation => {
+  const digest = createHash('sha256').update(`placement:${index}`).digest();
+  const unit = (i: number) => (digest[i % digest.length]! / 255) * 2 - 1;
+  // Bounded hard: past this the mark stops looking like the same hand and
+  // starts looking like a mark stamped carelessly.
+  const k = Math.min(2.5, Math.max(0, strength));
+
+  // A shared size change, plus a small independent one per axis: the mark comes
+  // out a little bigger or smaller AND a little differently proportioned, which
+  // is what reshapes the strokes.
+  const size = 1 + unit(0) * 0.05 * k;
+  return {
+    scaleX: size * (1 + unit(4) * 0.035 * k),
+    scaleY: size * (1 + unit(5) * 0.035 * k),
+    offsetX: unit(1) * 0.045 * k,
+    offsetY: unit(2) * 0.045 * k,
+    tiltDegrees: unit(3) * 1.6 * k,
+  };
+};
+
+/**
+ * Variant `index` of a mark. Same index, same image, always.
+ *
+ * The Sigma-Lognormal engine is tried first: it recovers the pen trajectory,
+ * decomposes the movement into ballistic strokes and perturbs those, which
+ * re-signs the mark instead of re-filtering it. It returns null for anything it
+ * cannot model — a mark too faint to skeletonise, a fragment, a stamp caught by
+ * mistake — and then the affine + drift + pen filter still produces a perfectly
+ * good variant. Falling back is silent on purpose: the signer is choosing
+ * between pictures, not between engines.
+ */
+export const variantAt = async (png: Uint8Array, index: number): Promise<Uint8Array> => {
+  if (env.SIGNATURE_VARIANT_ENGINE === 'sigma_lognormal') {
+    const strength = env.SIGNATURE_VARIATION_STRENGTH;
+    const synthesised = await synthesizeVariant(png, index, {
+      penStrength: strength,
+      range: {
+        amplitude: DEFAULT_RANGE.amplitude * strength,
+        timing: DEFAULT_RANGE.timing * strength,
+        spread: DEFAULT_RANGE.spread * strength,
+        angle: DEFAULT_RANGE.angle * strength,
+        slant: DEFAULT_RANGE.slant * strength,
+        size: DEFAULT_RANGE.size * strength,
+      },
+    });
+    if (synthesised) return synthesised;
+  }
+  return applyVariant(png, variantParamsFor(variantSeed(index)));
+};
 
 /**
  * Vary the pen rather than the letterforms: stroke weight and ink density.
@@ -266,27 +331,15 @@ export const variantAt = async (png: Uint8Array, index: number): Promise<Uint8Ar
  * signature stays unmistakably the same one — the difference reads as a
  * different moment of writing, not a different signature.
  */
-const inkWeight = async (png: Buffer, params: VariantParams): Promise<Buffer> => {
-  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  if (info.channels !== 4) return png;
-
-  // Gamma on coverage: below 1 fattens the stroke, above 1 slims it.
-  const gamma = 1 - params.weight * 0.28;
-  // Density multiplies the final opacity, within a range a real pen covers.
-  const density = 1 + params.density * 0.12;
-
-  const out = Buffer.from(data);
-  for (let i = 3; i < out.length; i += 4) {
-    const alpha = out[i]!;
-    if (alpha === 0) continue;
-    const shaped = Math.pow(alpha / 255, gamma) * density;
-    out[i] = Math.min(255, Math.max(0, Math.round(shaped * 255)));
-  }
-
-  return sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } })
-    .png()
-    .toBuffer();
-};
+const inkWeight = async (png: Buffer, params: VariantParams): Promise<Buffer> =>
+  Buffer.from(
+    await applyInkWeight(new Uint8Array(png), {
+      // Gamma on coverage: below 1 fattens the stroke, above 1 slims it.
+      gamma: 1 - params.weight * 0.28,
+      // Density multiplies the final opacity, within a range a real pen covers.
+      density: 1 + params.density * 0.12,
+    }),
+  );
 
 /**
  * A set of variants for the signer to look at and hand out to documents.
@@ -311,10 +364,22 @@ export const generateVariants = async (
 export const previewVariants = generateVariants;
 
 /**
- * Fallback when the signer assigned nothing: derive a stable index from the
- * document, so documents in a folder still differ from one another.
+ * Fallback when the signer assigned nothing: give each document in the folder
+ * its own variant.
+ *
+ * `ordinal` is the document's position in the folder, so the indices come out
+ * 0, 1, 2, 3 — distinct by construction.
+ *
+ * This replaced a hash of the document id taken modulo the folder's size, and
+ * the difference is not academic. Hashing n documents into n buckets collides
+ * almost always: two documents land on the same index with probability 1/2 for
+ * a pair, and all four stay distinct only 9% of the time for a folder of four.
+ * Measured on real folders, three out of four carried duplicate variants — so
+ * the folder that was signed to prove the variation worked came back with two
+ * byte-identical signatures, which reads, correctly, as the feature not
+ * working at all.
+ *
+ * Variation is worth having only if it is actually there on every document, so
+ * the assignment must guarantee it rather than leave it to a hash.
  */
-export const fallbackVariantIndex = (documentId: string, count: number): number => {
-  const digest = createHash('sha256').update(documentId).digest();
-  return digest[0]! % Math.max(1, count);
-};
+export const fallbackVariantIndex = (ordinal: number): number => Math.max(0, Math.trunc(ordinal));

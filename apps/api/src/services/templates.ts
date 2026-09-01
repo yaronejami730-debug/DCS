@@ -1,4 +1,4 @@
-import type { NormalizedRect, TemplateZone, ZoneType } from '@scansign/shared';
+import type { NormalizedRect, RequiredMarks, TemplateZone, ZoneType } from '@scansign/shared';
 import { matchesFilenamePattern } from '@scansign/pdf';
 import { db } from '../lib/supabase.js';
 
@@ -59,14 +59,22 @@ export const findTemplateForDocument = async (params: {
 }): Promise<{ template: TemplateRow; matchedBy: 'hash' | 'filename' } | null> => {
   const { ownerId, documentHash, filename, pageCount } = params;
 
-  // Only reusable templates take part in matching: a template configured for
-  // one document must never silently attach itself to somebody else's import.
+  // An exact SHA-256 match is the strongest signal there is, so `reusable` does
+  // not gate it: the very same bytes, already configured by this same owner,
+  // describe this document by definition. Gating it here meant re-uploading a
+  // file whose template existed parked the document in `awaiting_template`
+  // forever, because nothing else was ever going to match it either.
+  // `reusable` still gates the filename branch below, where a rename really
+  // could drag in the wrong template.
   const { data: byHash } = await db
     .from('templates')
     .select('id, name, document_hash, filename_pattern, page_count, reusable')
     .eq('owner_id', ownerId)
-    .eq('reusable', true)
     .eq('document_hash', documentHash)
+    // Several templates can share a hash; prefer a reusable one, then the most
+    // recently configured, so the pick is deterministic rather than arbitrary.
+    .order('reusable', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle<TemplateRow>();
 
@@ -99,4 +107,39 @@ export const loadTemplateZones = async (templateId: string): Promise<ZoneRow[]> 
     .order('zone_index', { ascending: true })
     .returns<ZoneRow[]>();
   return data ?? [];
+};
+
+/**
+ * Which marks a folder's templates actually call for.
+ *
+ * Asked before capturing, so the flow has exactly as many steps as the
+ * documents need — two for signature + stamp, three when a "Lu et approuvé" is
+ * also required — instead of asking for marks nobody wants.
+ *
+ * Counts, not booleans, because the console needs to know how many zones exist.
+ * The share-link surface deliberately reduces this to a list of types before it
+ * reaches the signer: a count of signature zones is a count of documents by
+ * another name, and the signer is not entitled to that.
+ */
+export const requiredMarksForFolder = async (folderId: string): Promise<RequiredMarks> => {
+  const { data: documents } = await db
+    .from('documents')
+    .select('template_id')
+    .eq('folder_id', folderId)
+    // A capture sheet has no zones by definition; including it would only ever
+    // contribute zero and invites the reader to wonder whether it might not.
+    .eq('role', 'to_sign')
+    .returns<Array<{ template_id: string | null }>>();
+
+  const counts: RequiredMarks = { signature: 0, stamp: 0, mention: 0, signature_stamp: 0 };
+  const seen = new Set<string>();
+
+  for (const doc of documents ?? []) {
+    if (!doc.template_id || seen.has(doc.template_id)) continue;
+    seen.add(doc.template_id);
+    for (const zone of await loadTemplateZones(doc.template_id)) {
+      counts[zone.type] += 1;
+    }
+  }
+  return counts;
 };

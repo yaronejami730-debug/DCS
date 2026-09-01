@@ -3,11 +3,13 @@ import { useAuth } from './lib/auth';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/Login';
 import { DashboardPage } from './pages/Dashboard';
-import { DevicesPage } from './pages/Devices';
 import { FoldersPage } from './pages/Folders';
 import { FolderDetailPage } from './pages/FolderDetail';
 import { TemplatesPage } from './pages/Templates';
 import { TemplateEditorPage } from './pages/TemplateEditor';
+import { DocumentPlacementPage } from './pages/DocumentPlacement';
+import { FolderComparisonPage } from './pages/FolderComparison';
+import { CropReturnPage } from './pages/CropReturn';
 
 export const App = () => {
   const { session } = useAuth();
@@ -26,11 +28,14 @@ export const App = () => {
       <Route path="/login" element={<Navigate to="/dashboard" replace />} />
       <Route element={<Layout />}>
         <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/devices" element={<DevicesPage />} />
         <Route path="/folders" element={<FoldersPage />} />
         <Route path="/folders/:id" element={<FolderDetailPage />} />
+        <Route path="/folders/:id/comparer" element={<FolderComparisonPage />} />
+        {/* Crop the marks out of a page a technician sent back. */}
+        <Route path="/folders/:id/reception/:returnId" element={<CropReturnPage />} />
         <Route path="/templates" element={<TemplatesPage />} />
         <Route path="/templates/:id" element={<TemplateEditorPage />} />
+        <Route path="/documents/:id/placement" element={<DocumentPlacementPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>

@@ -1,22 +1,75 @@
-import { Hono } from 'hono';
-import { assignTemplateSchema } from '@scansign/shared';
+import { Hono, type Context } from 'hono';
+import { adjustPlacementSchema, assignTemplateSchema } from '@scansign/shared';
 import { annotateTemplate } from '@scansign/pdf';
 import { ZONE_TYPE_LABEL, previewPdfPath, type ZoneType } from '@scansign/shared';
 import { db } from '../lib/supabase.js';
-import { badRequest, notFound } from '../lib/errors.js';
-import { requireAuth, type AppBindings } from '../lib/auth.js';
+import { badRequest, forbidden, notFound } from '../lib/errors.js';
+import {
+  assertShareScope,
+  documentIdsForLink,
+  requireAuthOrShare,
+  type ShareBindings,
+} from '../lib/share.js';
 import { downloadObject, signedUrl, uploadObject } from '../lib/storage.js';
 import { audit } from '../lib/audit.js';
 import { publish } from '../lib/realtime.js';
 import { loadTemplateZones } from '../services/templates.js';
+import {
+  adjustDocumentPlacement,
+  adjustmentBlocker,
+  resetDocumentPlacement,
+  zonesForDocument,
+} from '../services/placement.js';
 import { toDocument, type DocumentRow } from './mappers.js';
 
-export const documentRoutes = new Hono<AppBindings>();
-documentRoutes.use('*', requireAuth);
+export const documentRoutes = new Hono<ShareBindings>();
+
+/**
+ * Reachable by the console, and by an *operator* share link — the account
+ * holder who scanned a QR code off their own screen to carry on from their
+ * phone. A signer link is refused at `load` below: an outside technician has no
+ * business reading a document, whatever route they try.
+ */
+documentRoutes.use('*', requireAuthOrShare);
+
+/**
+ * Reading a document through an operator link is fine — it is the owner on
+ * their own phone. *Changing* one is not: re-assigning a template or moving a
+ * placement rewrites how every future signature lands, and a link is a bearer
+ * secret that can be screenshotted, forwarded or left in a browser on a shared
+ * machine. Those decisions stay behind a real sign-in.
+ */
+documentRoutes.use('*', async (c, next) => {
+  const method = c.req.method;
+  if (method !== 'GET' && method !== 'HEAD' && c.get('share')) {
+    throw forbidden('Cette action demande une connexion à la console.');
+  }
+  await next();
+});
 
 const SELECT = '*, templates:template_id (id, name)';
 
-const load = async (id: string, ownerId: string): Promise<DocumentRow> => {
+/**
+ * Load a document, enforcing every half of the share rule in one place.
+ *
+ * Three checks, and all three are needed:
+ *   owner_id     — whose document it is
+ *   folder       — the folder the link names
+ *   subset       — the documents that link actually covers
+ *
+ * The third is the one that is easy to forget and expensive to omit: without
+ * it, a link scoped to the delivery notes would still serve the contract
+ * sitting in the same folder. Every route in this file goes through here rather
+ * than repeating them, because a check each handler has to remember is a check
+ * one handler will eventually not.
+ */
+const load = async (
+  c: Context<ShareBindings>,
+  id: string,
+  ownerId: string,
+): Promise<DocumentRow> => {
+  const share = c.get('share');
+
   const { data } = await db
     .from('documents')
     .select(SELECT)
@@ -24,18 +77,27 @@ const load = async (id: string, ownerId: string): Promise<DocumentRow> => {
     .eq('owner_id', ownerId)
     .maybeSingle<DocumentRow>();
   if (!data) throw notFound('Document introuvable.');
+
+  assertShareScope(share, data.folder_id);
+
+  if (share) {
+    const allowed = await documentIdsForLink(share.linkId, share.folderId);
+    if (!allowed.includes(data.id)) {
+      throw forbidden('Ce lien ne donne pas accès à ce document.');
+    }
+  }
   return data;
 };
 
 documentRoutes.get('/:id', async (c) => {
   const user = c.get('user');
-  return c.json(toDocument(await load(c.req.param('id'), user.id)));
+  return c.json(toDocument(await load(c, c.req.param('id'), user.id)));
 });
 
-/** Short-lived link to the ORIGINAL PDF — used by the phone's preview. */
+/** Short-lived link to the ORIGINAL PDF — used by the console's preview. */
 documentRoutes.get('/:id/original-url', async (c) => {
   const user = c.get('user');
-  const doc = await load(c.req.param('id'), user.id);
+  const doc = await load(c, c.req.param('id'), user.id);
   return c.json({ url: await signedUrl(doc.storage_path), filename: doc.filename });
 });
 
@@ -49,7 +111,7 @@ documentRoutes.get('/:id/original-url', async (c) => {
  */
 documentRoutes.get('/:id/preview-url', async (c) => {
   const user = c.get('user');
-  const doc = await load(c.req.param('id'), user.id);
+  const doc = await load(c, c.req.param('id'), user.id);
 
   // Once signed, the zones have served their purpose: show the real thing,
   // with the actual signature, stamp and mention on it. Overlaying the
@@ -130,12 +192,71 @@ documentRoutes.get('/:id/preview-url', async (c) => {
 /** Short-lived link to the SIGNED PDF — the console's download button. */
 documentRoutes.get('/:id/final-url', async (c) => {
   const user = c.get('user');
-  const doc = await load(c.req.param('id'), user.id);
+  const doc = await load(c, c.req.param('id'), user.id);
   if (!doc.final_pdf_path) throw notFound("Ce document n'a pas encore de version signée.");
   return c.json({
     url: await signedUrl(doc.final_pdf_path),
     filename: doc.filename.replace(/\.pdf$/i, '') + '-signe.pdf',
   });
+});
+
+/**
+ * Where this document's marks currently sit.
+ *
+ * The console opens the adjustment editor with these, so what the operator
+ * drags is what is actually stamped — the template's zones until someone has
+ * adjusted this document, its own from then on.
+ */
+documentRoutes.get('/:id/placement', async (c) => {
+  const user = c.get('user');
+  const doc = await load(c, c.req.param('id'), user.id);
+  const { zones, source } = await zonesForDocument(doc);
+
+  return c.json({
+    documentId: doc.id,
+    source,
+    zones,
+    // Surfaced rather than inferred client-side: the reasons a signed document
+    // cannot be re-stamped (no session recorded, cutouts purged by retention)
+    // are server-side facts, and the console should say which one applies.
+    blockedReason: adjustmentBlocker(doc),
+  });
+});
+
+/**
+ * Move or resize the marks on a signed document, and re-stamp it.
+ *
+ * Regenerates from the ORIGINAL PDF plus the stored cutout at its recorded
+ * variant, so the signature is the same one — only its geometry changes. The
+ * signed PDF keeps its path, so links already handed out still resolve.
+ */
+documentRoutes.post('/:id/placement', async (c) => {
+  const user = c.get('user');
+  const parsed = adjustPlacementSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    throw badRequest('Zones invalides.', 'BAD_REQUEST', parsed.error.issues);
+  }
+
+  const result = await adjustDocumentPlacement({
+    documentId: c.req.param('id'),
+    ownerId: user.id,
+    zones: parsed.data.zones.map((zone) => ({
+      page: zone.page,
+      type: zone.type,
+      rect: zone.rect,
+      index: zone.index,
+    })),
+  });
+
+  return c.json(result);
+});
+
+/** Drop this document's overrides and go back to the template's placement. */
+documentRoutes.delete('/:id/placement', async (c) => {
+  const user = c.get('user');
+  return c.json(
+    await resetDocumentPlacement({ documentId: c.req.param('id'), ownerId: user.id }),
+  );
 });
 
 /**
@@ -145,7 +266,7 @@ documentRoutes.get('/:id/final-url', async (c) => {
  */
 documentRoutes.post('/:id/template', async (c) => {
   const user = c.get('user');
-  const doc = await load(c.req.param('id'), user.id);
+  const doc = await load(c, c.req.param('id'), user.id);
   const parsed = assignTemplateSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw badRequest('Template requis.');
 

@@ -21,8 +21,10 @@ const readBearer = (c: Context): string | null => {
 
 /**
  * Verifies a Supabase access token and pins the caller's identity onto the
- * request. The SAME token type is used by the web console and the iPhone —
- * one account, two clients.
+ * request.
+ *
+ * This is the operator's credential. A signer following a share link never
+ * reaches here — see requireAuthOrShare in ./share.ts, which accepts either.
  */
 export const requireAuth: MiddlewareHandler<AppBindings> = async (c, next) => {
   const token = readBearer(c);

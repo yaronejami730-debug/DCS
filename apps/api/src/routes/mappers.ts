@@ -5,20 +5,19 @@ export interface FolderRow {
   owner_id: string;
   reference: number;
   name: string;
-  device_id: string | null;
   status: Folder['status'];
   error_code: string | null;
   error_message: string | null;
   created_at: string;
   delivered_at: string | null;
   completed_at: string | null;
-  devices?: { id: string; name: string } | null;
   documents?: DocumentRow[];
 }
 
 export interface DocumentRow {
   id: string;
   folder_id: string;
+  role: Document['role'];
   filename: string;
   storage_path: string;
   final_pdf_path: string | null;
@@ -30,12 +29,18 @@ export interface DocumentRow {
   error_code: string | null;
   error_message: string | null;
   created_at: string;
+  /** Which session's cutouts are on this document — needed to re-stamp it. */
+  signing_session_id: string | null;
+  /** Which variant of those cutouts, so a re-stamp reproduces the same mark. */
+  variant_index: number | null;
   templates?: { id: string; name: string } | null;
 }
 
 export const toDocument = (row: DocumentRow): Document => ({
   id: row.id,
   folderId: row.folder_id,
+  // Defaulted for rows read before the column existed in a given deploy.
+  role: row.role ?? 'to_sign',
   filename: row.filename,
   storagePath: row.storage_path,
   finalPdfPath: row.final_pdf_path,
@@ -47,6 +52,7 @@ export const toDocument = (row: DocumentRow): Document => ({
   errorCode: (row.error_code as Document['errorCode']) ?? null,
   errorMessage: row.error_message,
   createdAt: row.created_at,
+  signingSessionId: row.signing_session_id ?? null,
   template: row.templates ?? null,
 });
 
@@ -55,16 +61,13 @@ export const toFolder = (row: FolderRow): Folder => ({
   ownerId: row.owner_id,
   reference: Number(row.reference),
   name: row.name,
-  deviceId: row.device_id,
   status: row.status,
   errorCode: (row.error_code as Folder['errorCode']) ?? null,
   errorMessage: row.error_message,
   createdAt: row.created_at,
   deliveredAt: row.delivered_at,
   completedAt: row.completed_at,
-  device: row.devices ?? null,
   documents: (row.documents ?? []).map(toDocument),
 });
 
-export const FOLDER_SELECT =
-  '*, devices:device_id (id, name), documents (*, templates:template_id (id, name))';
+export const FOLDER_SELECT = '*, documents (*, templates:template_id (id, name))';

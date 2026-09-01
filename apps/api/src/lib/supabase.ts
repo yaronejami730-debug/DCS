@@ -13,7 +13,7 @@ export const db: SupabaseClient = createClient(
 
 /**
  * Anon client, used only to exchange credentials for a session on behalf of a
- * client. Keeping it here means neither the phone nor the browser ever needs a
+ * client. Keeping it here means no browser client ever needs a
  * Supabase key of its own.
  */
 export const authClient: SupabaseClient = createClient(

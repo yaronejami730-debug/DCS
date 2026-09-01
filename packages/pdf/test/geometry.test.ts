@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   computeImagePlacement,
   containFit,
+  fitMarkInZone,
+  applyMarkVariation,
+  NO_VARIATION,
   normalizedToPdfRect,
   normalizedToPixelRect,
   normalizeRotation,
@@ -263,5 +266,136 @@ describe('computeImagePlacement', () => {
       });
       expect(p.rotateDegrees).toBe(rotation);
     }
+  });
+});
+
+/**
+ * Sizing a mark inside the zone drawn for it.
+ *
+ * Strict contain-fit was height-led in every real template measured — operators
+ * draw a wide flat box along the signature line, and an ink cutout is far less
+ * elongated — so marks filled 100% of the zone height and as little as 23% of
+ * its width, coming out visibly too small.
+ */
+describe('fitMarkInZone', () => {
+  const zone = { x: 0, y: 0, width: 274, height: 86 };
+
+  it('makes the mark markedly bigger than strict contain did', () => {
+    // A signature-over-stamp cutout: 1400x867, aspect 1.61, in a 3.2 box.
+    // Strict contain filled barely half the drawn width.
+    const strict = containFit(1400, 867, zone);
+    const led = fitMarkInZone(1400, 867, zone);
+
+    expect(strict.width / zone.width).toBeLessThan(0.55);
+    expect(led.width / zone.width).toBeGreaterThan(0.7);
+    expect(led.width).toBeGreaterThan(strict.width * 1.4);
+  });
+
+  it('fills the drawn width exactly when the height cap allows it', () => {
+    // A flat mark in a flat box: nothing forces a compromise, so the mark
+    // occupies precisely the width that was drawn for it.
+    const flat = { x: 0, y: 0, width: 284, height: 60 };
+    const led = fitMarkInZone(1400, 319, flat);
+    expect(led.width).toBeCloseTo(flat.width, 6);
+  });
+
+  it('never distorts the mark', () => {
+    const shapes: Array<[number, number]> = [
+      [1400, 867],
+      [1400, 319],
+      [300, 900],
+    ];
+    for (const [w, h] of shapes) {
+      const fitted = fitMarkInZone(w, h, zone);
+      expect(fitted.width / fitted.height).toBeCloseTo(w / h, 4);
+    }
+  });
+
+  it('caps how far the mark may grow out of its zone', () => {
+    // A near-square mark in a flat box would otherwise tower over the line and
+    // reach into the printed text above and below.
+    const fitted = fitMarkInZone(900, 900, zone);
+    expect(fitted.height / zone.height).toBeLessThanOrEqual(1.5 + 1e-9);
+  });
+
+  it('stays centred on the zone, above and below', () => {
+    const fitted = fitMarkInZone(1400, 867, zone);
+    const centreX = fitted.x + fitted.width / 2;
+    const centreY = fitted.y + fitted.height / 2;
+    expect(centreX).toBeCloseTo(zone.x + zone.width / 2, 6);
+    expect(centreY).toBeCloseTo(zone.y + zone.height / 2, 6);
+  });
+
+  it('reproduces strict contain when overflow is not allowed', () => {
+    const strict = containFit(1400, 867, zone);
+    const capped = fitMarkInZone(1400, 867, zone, { fill: 1, maxHeightOverflow: 1 });
+    expect(capped.width).toBeCloseTo(strict.width, 6);
+    expect(capped.height).toBeCloseTo(strict.height, 6);
+  });
+
+  it('does not enlarge a mark that already fills its zone', () => {
+    // Tall zone, wide-ish mark: height already binds, so nothing changes.
+    const tall = { x: 0, y: 0, width: 180, height: 124 };
+    const strict = containFit(1400, 867, tall);
+    const led = fitMarkInZone(1400, 867, tall);
+    expect(led.width).toBeLessThanOrEqual(strict.width);
+  });
+
+  it('rejects a source with no size rather than dividing by zero', () => {
+    expect(() => fitMarkInZone(0, 100, zone)).toThrow();
+  });
+});
+
+/**
+ * Per-signing variation, applied where it survives.
+ *
+ * The cutout is trimmed to its ink and then fitted into its zone, and those two
+ * steps normalise away exactly a scale and a translation — which is why varying
+ * the image itself produced marks that measured as different and looked
+ * identical. Applied to the placement, nothing divides it out again.
+ */
+describe('applyMarkVariation', () => {
+  const base = { x: 100, y: 200, width: 180, height: 60, rotateDegrees: 0 };
+
+  it('leaves a placement alone when there is nothing to vary', () => {
+    expect(applyMarkVariation(base, NO_VARIATION)).toEqual(base);
+  });
+
+  it('resizes about the mark centre rather than its corner', () => {
+    const scaled = applyMarkVariation(base, { ...NO_VARIATION, scaleX: 1.2, scaleY: 1.2 });
+    expect(scaled.width).toBeCloseTo(216, 6);
+    expect(scaled.height).toBeCloseTo(72, 6);
+    // Centre held: growing a mark must not also walk it across the page.
+    expect(scaled.x + scaled.width / 2).toBeCloseTo(base.x + base.width / 2, 6);
+    expect(scaled.y + scaled.height / 2).toBeCloseTo(base.y + base.height / 2, 6);
+  });
+
+  it('reshapes the strokes when the axes scale differently', () => {
+    const squashed = applyMarkVariation(base, { ...NO_VARIATION, scaleX: 1.05, scaleY: 0.95 });
+    expect(squashed.width / squashed.height).toBeGreaterThan(base.width / base.height);
+  });
+
+  it('offsets along the mark, in fractions of its own size', () => {
+    const moved = applyMarkVariation(base, { ...NO_VARIATION, offsetX: 0.5, offsetY: -0.25 });
+    expect(moved.x + moved.width / 2).toBeCloseTo(base.x + base.width / 2 + 90, 6);
+    expect(moved.y + moved.height / 2).toBeCloseTo(base.y + base.height / 2 - 15, 6);
+  });
+
+  it('tilts about the centre — pdf-lib rotates about the corner', () => {
+    // Rotating a drawn image about its anchor also translates it by an amount
+    // that grows with its size; recovering the centre first keeps a tilt a tilt.
+    const tilted = applyMarkVariation(base, { ...NO_VARIATION, tiltDegrees: 10 });
+    const a = (10 * Math.PI) / 180;
+    const cx = tilted.x + (tilted.width / 2) * Math.cos(a) - (tilted.height / 2) * Math.sin(a);
+    const cy = tilted.y + (tilted.width / 2) * Math.sin(a) + (tilted.height / 2) * Math.cos(a);
+    expect(cx).toBeCloseTo(base.x + base.width / 2, 6);
+    expect(cy).toBeCloseTo(base.y + base.height / 2, 6);
+    expect(tilted.rotateDegrees).toBe(10);
+  });
+
+  it('adds its tilt to a page that is already rotated', () => {
+    const onRotatedPage = { ...base, rotateDegrees: 90 };
+    const tilted = applyMarkVariation(onRotatedPage, { ...NO_VARIATION, tiltDegrees: -2 });
+    expect(tilted.rotateDegrees).toBe(88);
   });
 });

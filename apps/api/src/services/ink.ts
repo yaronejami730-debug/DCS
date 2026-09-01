@@ -1,6 +1,57 @@
 import sharp from 'sharp';
 
 /**
+ * Hermite ramp: 0 below `edge0`, 1 above `edge1`, smooth in between.
+ *
+ * Used on coverage rather than colour. A hard threshold would give a staircase
+ * edge; this keeps a gradient exactly as wide as the band asks for.
+ */
+const smoothstep = (edge0: number, edge1: number, x: number): number => {
+  if (edge1 <= edge0) return x >= edge1 ? 1 : 0;
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * Otsu's threshold over a 256-bin histogram: the level that best separates the
+ * values into two groups. `from` skips bins at the bottom — for coverage that
+ * means ignoring the fully transparent paper, which otherwise outvotes
+ * everything else and drags the threshold to zero.
+ */
+const otsu = (histogram: number[], from = 0): number => {
+  let total = 0;
+  let sum = 0;
+  for (let i = from; i < 256; i++) {
+    total += histogram[i]!;
+    sum += i * histogram[i]!;
+  }
+  if (total === 0) return 128;
+
+  let backgroundWeight = 0;
+  let backgroundSum = 0;
+  let best = 128;
+  let bestVariance = -1;
+
+  for (let t = from; t < 256; t++) {
+    backgroundWeight += histogram[t]!;
+    if (backgroundWeight === 0) continue;
+    const foregroundWeight = total - backgroundWeight;
+    if (foregroundWeight === 0) break;
+
+    backgroundSum += t * histogram[t]!;
+    const backgroundMean = backgroundSum / backgroundWeight;
+    const foregroundMean = (sum - backgroundSum) / foregroundWeight;
+    const between =
+      backgroundWeight * foregroundWeight * (backgroundMean - foregroundMean) ** 2;
+    if (between > bestVariance) {
+      bestVariance = between;
+      best = t;
+    }
+  }
+  return best;
+};
+
+/**
  * Make photographed ink look like ink again.
  *
  * A signature photographed on a desk is rarely black on white: it is mid-grey
@@ -153,6 +204,23 @@ export const smoothEdges = async (png: Uint8Array): Promise<Uint8Array> => {
       return new Uint8Array(png);
     }
 
+    /**
+     * Blur, then put the coverage back.
+     *
+     * Writing the blurred alpha straight out is what made cutouts look washed
+     * out: the blur does not just soften the rim, it drags the solid middle of
+     * every stroke down with it — measured on a real capture, mean opacity fell
+     * from 220 to 174 at this exact line, so a third of the ink was being spent
+     * on smoothing. A thin stroke, which is nearly all rim, loses most of
+     * itself.
+     *
+     * Re-applying contrast to the blurred field fixes that without giving up
+     * the smoothing. Inside a stroke the field is ~1 and comes back fully
+     * opaque; outside it is ~0 and stays transparent; only the narrow band
+     * where the blur actually straddles the boundary keeps a gradient. That
+     * band is the anti-aliased edge the PDF needs, and it is all we wanted the
+     * blur for.
+     */
     const out = Buffer.from(data);
     for (let p = 0, i = 0; i < out.length; i += 4, p += 1) {
       // Resampling a uniform field cannot shift the colour, but it can leave
@@ -160,7 +228,7 @@ export const smoothEdges = async (png: Uint8Array): Promise<Uint8Array> => {
       out[i] = ink.r;
       out[i + 1] = ink.g;
       out[i + 2] = ink.b;
-      out[i + 3] = blurred[p]!;
+      out[i + 3] = Math.round(smoothstep(0.35, 0.65, blurred[p]! / 255) * 255);
     }
 
     const smoothed = await sharp(out, {
@@ -208,16 +276,33 @@ export const restoreInk = async (
     // Already dark enough: leave a black pen alone rather than crushing it.
     const factor = mean > target ? Math.max(0, 1 - ((mean - target) / mean) * strength) : 1;
 
+    /**
+     * Where to put the line between ink and haze, chosen per image.
+     *
+     * Some captures come back as a crisp mask; others come back as a veil —
+     * every pixel a little bit opaque, the strokes only slightly more so than
+     * the paper. A fixed gamma cannot serve both: measured, the previous
+     * `alpha^0.85` moved a veil from mean opacity 144 to 146, which is no
+     * correction at all, and that veil is what reads as washed out.
+     *
+     * So the split is taken from the image's own coverage histogram, by Otsu —
+     * the same criterion used to threshold a scan. Coverage above it ramps to
+     * solid, below it fades out, with a band either side wide enough to keep
+     * the edge anti-aliased. A mask that is already crisp has its two classes
+     * far apart and comes through essentially untouched.
+     */
+    const histogram = new Array<number>(256).fill(0);
+    for (let i = 3; i < out.length; i += 4) histogram[out[i]!] = histogram[out[i]!]! + 1;
+    const split = otsu(histogram, 1) / 255;
+    const band = Math.max(0.06, split * 0.35);
+    const low = Math.max(0, split - band);
+    const high = Math.min(1, split + band);
+
     for (let i = 0; i < out.length; i += 4) {
       const alpha = out[i + 3]!;
       if (alpha === 0) continue;
 
-      // Raise partial coverage gently. An earlier gamma of 0.6 pushed the few
-      // partial pixels straight to opaque, which destroyed the little
-      // anti-aliasing the mask had and made the edges visibly jagged. 0.85
-      // firms up faded strokes while leaving the edge gradient intact for
-      // smoothEdges to work with.
-      out[i + 3] = clamp(Math.pow(alpha / 255, 0.85) * 255);
+      out[i + 3] = clamp(smoothstep(low, high, alpha / 255) * 255);
 
       if (factor < 1) {
         // Same factor on every channel: darkens without shifting hue, so a
