@@ -446,8 +446,10 @@ export const useStartCropSession = () =>
     }) => {
       const form = new FormData();
       form.append('photo', page, 'scan.jpg');
+      // skipDetect: the console draws its own boxes; paying seconds of server
+      // ink-detection for suggestions nobody reads made the first load crawl.
       return api<CreatedSession>(
-        `/folders/${folderId}/signing-sessions?captureMode=single&returnId=${returnId}`,
+        `/folders/${folderId}/signing-sessions?captureMode=single&returnId=${returnId}&skipDetect=1`,
         { method: 'POST', form },
       );
     },

@@ -229,7 +229,14 @@ const startSession = async (c: SessionContext, folderId: string) => {
     .select('*')
     .single<SessionRow>();
 
-  const suggestions = await detectInkRegionsSafely(normalized.bytes);
+  /**
+   * Ink detection suggests framing boxes — valuable on the phone flow, dead
+   * weight for the console's crop screen, which never reads the suggestions
+   * and eats its multi-second cost inside an already long request. The caller
+   * says so explicitly.
+   */
+  const suggestions =
+    c.req.query('skipDetect') === '1' ? null : await detectInkRegionsSafely(normalized.bytes);
 
   await audit({
     ownerId: user.id,
@@ -292,7 +299,14 @@ sessionRoutes.post('/signing-sessions/:id/photo/:mark', async (c) => {
     .select('*')
     .single<SessionRow>();
 
-  const suggestions = await detectInkRegionsSafely(normalized.bytes);
+  /**
+   * Ink detection suggests framing boxes — valuable on the phone flow, dead
+   * weight for the console's crop screen, which never reads the suggestions
+   * and eats its multi-second cost inside an already long request. The caller
+   * says so explicitly.
+   */
+  const suggestions =
+    c.req.query('skipDetect') === '1' ? null : await detectInkRegionsSafely(normalized.bytes);
   // Only the region matching this mark is meaningful here.
   const suggested =
     mark === 'stamp' ? (suggestions.stamp ?? suggestions.signature) : suggestions.signature;

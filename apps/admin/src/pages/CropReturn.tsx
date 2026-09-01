@@ -81,11 +81,41 @@ const rasterise = async (url: string, page: number): Promise<Blob> => {
   });
 };
 
-/** Fetch an already-image return as a blob, so both kinds upload identically. */
+/**
+ * Fetch an already-image return and cap its long edge before upload.
+ *
+ * Phones return 12MP originals; uploading 3024×4032 and letting the server
+ * shrink it cost tens of seconds of spinner. 2400px keeps every stroke the
+ * extraction engine can use — it works on the crop, not the page — at a
+ * quarter of the bytes.
+ */
+const MAX_EDGE = 2400;
+
 const fetchImage = async (url: string): Promise<Blob> => {
   const res = await fetch(url);
   if (!res.ok) throw new Error('téléchargement impossible');
-  return res.blob();
+  const source = await res.blob();
+
+  const bitmap = await createImageBitmap(source).catch(() => null);
+  if (!bitmap) return source;
+  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  if (scale === 1) {
+    bitmap.close();
+    return source;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const context = canvas.getContext('2d');
+  if (!context) {
+    bitmap.close();
+    return source;
+  }
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return new Promise<Blob>((resolve) => {
+    canvas.toBlob((b) => resolve(b ?? source), 'image/jpeg', 0.92);
+  });
 };
 
 type ServedState = 'processing' | 'completed' | 'error';
@@ -110,6 +140,8 @@ export const CropReturnPage = () => {
   const [photo, setPhoto] = useState<{ url: string; width: number; height: number } | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
+  /** What the long first load is actually doing — a silent spinner reads as a hang. */
+  const [prepareStep, setPrepareStep] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const [targetDoc, setTargetDoc] = useState<string>('');
@@ -151,6 +183,7 @@ export const CropReturnPage = () => {
       setRegions({});
       setCurrent(null);
       try {
+        setPrepareStep('Téléchargement du scan…');
         const blob =
           item.contentType === 'application/pdf'
             ? await rasterise(item.url!, page)
@@ -158,6 +191,7 @@ export const CropReturnPage = () => {
         if (cancelled) return;
         setPageBlob(blob);
 
+        setPrepareStep('Envoi et préparation… (quelques secondes au premier chargement)');
         const created = await startSession.mutateAsync({ folderId, returnId: item.id, page: blob });
         if (cancelled) return;
         setSessionId(created.session.id);
@@ -294,7 +328,9 @@ export const CropReturnPage = () => {
           {preparing || !photo ? (
             <div className="py-16">
               <Spinner />
-              <p className="mt-2 text-center text-sm text-ink-400">Préparation de la page…</p>
+              <p className="mt-2 text-center text-sm text-ink-400">
+                {prepareStep || 'Préparation de la page…'}
+              </p>
             </div>
           ) : (
             <>
