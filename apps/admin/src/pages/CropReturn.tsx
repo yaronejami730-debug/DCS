@@ -158,6 +158,8 @@ export const CropReturnPage = () => {
   const [served, setServed] = useState<Array<{ id: string; state: ServedState }>>([]);
 
   const preparedFor = useRef<string | null>(null);
+  /** Bumped by the retry button to force the prepare effect to run again. */
+  const [retryToken, setRetryToken] = useState(0);
   /**
    * The scan's signed URL, read through a ref on purpose.
    *
@@ -193,6 +195,27 @@ export const CropReturnPage = () => {
     preparedFor.current = key;
 
     let cancelled = false;
+
+    /**
+     * A hard ceiling on preparation.
+     *
+     * Everything inside is supposed to resolve in a few seconds, but a hung
+     * fetch, a wedged rasterise, or a cold serverless function that never
+     * answers would otherwise leave the spinner turning forever — which is
+     * exactly the failure being chased. Past this, the attempt is abandoned
+     * with an error the operator can retry, so the page can never loop.
+     */
+    const HARD_LIMIT_MS = 40_000;
+    const deadline = setTimeout(() => {
+      if (cancelled) return;
+      cancelled = true;
+      preparedFor.current = null;
+      setPreparing(false);
+      setError(
+        'La préparation a pris trop de temps. Vérifiez votre connexion, puis réessayez.',
+      );
+    }, HARD_LIMIT_MS);
+
     const run = async () => {
       setPreparing(true);
       setError(null);
@@ -223,16 +246,18 @@ export const CropReturnPage = () => {
           preparedFor.current = null;
         }
       } finally {
+        clearTimeout(deadline);
         if (!cancelled) setPreparing(false);
       }
     };
     void run();
     return () => {
       cancelled = true;
+      clearTimeout(deadline);
     };
     // item?.url deliberately absent: it changes on every poll. See urlRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item?.id, page, folderId]);
+  }, [item?.id, page, folderId, retryToken]);
 
   const handleChange = useCallback((rect: NormalizedRect) => setCurrent(rect), []);
 
@@ -337,7 +362,7 @@ export const CropReturnPage = () => {
         </Button>
       }
     >
-      {error && (
+      {error && photo && (
         <Card className="mb-4 border-l-4 border-l-red-500 p-4">
           <p className="text-sm text-red-700">{error}</p>
         </Card>
@@ -345,7 +370,21 @@ export const CropReturnPage = () => {
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <Card className="p-4">
-          {preparing || !photo ? (
+          {error && !preparing ? (
+            <div className="flex flex-col items-center gap-3 py-16">
+              <span className="text-3xl">⚠️</span>
+              <p className="max-w-sm text-center text-sm text-red-700">{error}</p>
+              <Button
+                onClick={() => {
+                  preparedFor.current = null;
+                  setError(null);
+                  setRetryToken((n) => n + 1);
+                }}
+              >
+                Réessayer
+              </Button>
+            </div>
+          ) : preparing || !photo ? (
             <div className="py-16">
               <Spinner />
               <p className="mt-2 text-center text-sm text-ink-400">
