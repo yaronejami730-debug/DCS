@@ -20,7 +20,10 @@
  *   - signing work must finish before the response returns, or the frozen
  *     function abandons it — turned on with PROCESS_INLINE in the environment.
  */
-import { handle } from 'hono/vercel';
+// The Node-runtime adapter: hono/vercel's handler speaks the Web
+// Request/Response signature, which Vercel's Node functions do not call —
+// the invocation just hangs. This one speaks (req, res).
+import { handle } from '@hono/node-server/vercel';
 import { createApp } from './src/app.js';
 
 export const config = {

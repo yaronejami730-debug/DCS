@@ -44,3 +44,6 @@ tools/fixtures/
 # Local scratch + operational dumps
 apps/api/scripts/_*-tmp.*
 backups/
+
+# Vercel
+.vercel
