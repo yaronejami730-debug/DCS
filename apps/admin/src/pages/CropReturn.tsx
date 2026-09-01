@@ -16,6 +16,7 @@ import {
   useStartCropSession,
   useSubmitRegions,
   useMarkReturnHandled,
+  useClassifyMark,
 } from '../lib/queries';
 import { api, ApiRequestError } from '../lib/api';
 import { Page } from '../components/Layout';
@@ -135,6 +136,12 @@ export const CropReturnPage = () => {
   const startSession = useStartCropSession();
   const submit = useSubmitRegions();
   const markHandled = useMarkReturnHandled();
+  const classify = useClassifyMark();
+  /** The type Claude recognised for the current box, offered as a chip. */
+  const [suggested, setSuggested] = useState<{ type: ZoneType; confidence: number | null } | null>(
+    null,
+  );
+  const classifiedFor = useRef<string>('');
 
   const item = returns?.items.find((r) => r.id === returnId);
   const contracts = (folder?.documents ?? []).filter((d) => d.role !== 'for_signing');
@@ -307,6 +314,45 @@ export const CropReturnPage = () => {
   }, [item?.id, page, folderId, retryToken]);
 
   const handleChange = useCallback((rect: NormalizedRect) => setCurrent(rect), []);
+
+  /**
+   * Recognise the framed mark's type once the box has settled.
+   *
+   * Keyed on the rounded rectangle so it fires once per distinct box, not on
+   * every pixel of a drag, and only when a session and a document exist. The
+   * result is a suggestion the operator applies with a tap — never applied on
+   * its own, so a wrong guess is free.
+   */
+  useEffect(() => {
+    if (!sessionId || !current || !targetDoc) return;
+    const key = [current.x, current.y, current.width, current.height]
+      .map((n) => n.toFixed(3))
+      .join(',');
+    if (classifiedFor.current === key) return;
+    const timer = setTimeout(() => {
+      classifiedFor.current = key;
+      classify.mutate(
+        { sessionId, region: current },
+        {
+          onSuccess: (r) => {
+            if (r.available && r.type && markChoices.includes(r.type)) {
+              setSuggested({ type: r.type, confidence: r.confidence });
+            } else {
+              setSuggested(null);
+            }
+          },
+          onError: () => setSuggested(null),
+        },
+      );
+    }, 700);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, targetDoc, current?.x, current?.y, current?.width, current?.height]);
+
+  // Clear a stale suggestion when the box is cleared or the mark changes.
+  useEffect(() => {
+    if (!current) setSuggested(null);
+  }, [current]);
 
   /**
    * The marks this target document actually has zones for.
@@ -564,6 +610,29 @@ export const CropReturnPage = () => {
                   signer » pour y placer des zones avant de capturer.
                 </p>
               ) : (
+                <>
+                {suggested && suggested.type !== mark && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMark(suggested.type);
+                      setSuggested(null);
+                    }}
+                    className="mb-2 flex w-full items-center gap-2 rounded-lg bg-brand-50 px-3 py-2 text-left text-sm text-brand-700 ring-1 ring-brand-200 hover:bg-brand-100"
+                  >
+                    <span>✨</span>
+                    <span className="flex-1">
+                      Reconnu : <span className="font-semibold">{ZONE_TYPE_LABEL[suggested.type]}</span>
+                      {suggested.confidence != null
+                        ? ` (${Math.round(suggested.confidence * 100)} %)`
+                        : ''}
+                    </span>
+                    <span className="font-medium underline">Appliquer</span>
+                  </button>
+                )}
+                {classify.isPending && (
+                  <p className="mb-2 text-xs text-ink-400">Reconnaissance du type…</p>
+                )}
                 <Select
                   label="Cette zone est…"
                   value={mark}
@@ -580,6 +649,7 @@ export const CropReturnPage = () => {
                     </option>
                   ))}
                 </Select>
+                </>
               )}
             </div>
 

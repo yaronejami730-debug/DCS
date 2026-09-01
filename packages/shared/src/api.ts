@@ -89,6 +89,12 @@ export const linkActivitySchema = z.object({
 });
 export type LinkActivityInput = z.infer<typeof linkActivitySchema>;
 
+/** Ask which type a framed region is. Single-photo (console crop) sessions only. */
+export const classifyMarkSchema = z.object({
+  region: normalizedRectSchema,
+});
+export type ClassifyMarkInput = z.infer<typeof classifyMarkSchema>;
+
 export const geolocationSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),

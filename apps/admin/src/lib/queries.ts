@@ -455,6 +455,28 @@ export const useStartCropSession = () =>
     },
   });
 
+export interface MarkClassification {
+  available: boolean;
+  type: ZoneType | null;
+  confidence: number | null;
+}
+
+/**
+ * Ask the backend what type a framed region is (Claude vision).
+ *
+ * Advisory: the answer pre-selects the type dropdown, the operator confirms or
+ * overrides. `available: false` means no key is configured — the caller simply
+ * does nothing with it.
+ */
+export const useClassifyMark = () =>
+  useMutation({
+    mutationFn: ({ sessionId, region }: { sessionId: string; region: NormalizedRect }) =>
+      api<MarkClassification>(`/signing-sessions/${sessionId}/classify-mark`, {
+        method: 'POST',
+        json: { region },
+      }),
+  });
+
 export const usePreviewCutout = () =>
   useMutation({
     mutationFn: ({

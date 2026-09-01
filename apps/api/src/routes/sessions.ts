@@ -4,6 +4,7 @@ import {
   photoPath,
   generateVariantsSchema,
   previewCutoutSchema,
+  classifyMarkSchema,
   startSessionSchema,
   submitRegionsSchema,
   HANDWRITTEN_MARKS,
@@ -36,6 +37,7 @@ import {
 import { createExtractionProvider } from '../services/extraction/index.js';
 import { generateVariants } from '../services/variants.js';
 import { detectInkRegionsSafely } from '../services/detect.js';
+import { classifyMark, classificationAvailable } from '../services/classify.js';
 import { processSigningSession } from '../services/processing.js';
 import { loadTemplateZones, requiredMarksForFolder } from '../services/templates.js';
 
@@ -354,6 +356,48 @@ sessionRoutes.post('/signing-sessions/:id/photo/:mark', async (c) => {
  * a data URL because it is a few kilobytes and belongs to nothing yet: storing
  * a preview would mean cleaning it up later for no gain.
  */
+/**
+ * Recognise the type of a framed region — Claude vision behind a strict prompt.
+ *
+ * Only for the console's crop flow (single-photo sessions): it reads the
+ * uploaded scan, crops the box the operator drew, and asks what mark it is, so
+ * the type dropdown can pre-select itself. Advisory — the operator always sees
+ * and can override the pick. A share token is refused: an outside technician
+ * never reaches this screen. With no ANTHROPIC_API_KEY the route reports the
+ * feature off rather than erroring.
+ */
+sessionRoutes.post('/signing-sessions/:id/classify-mark', async (c) => {
+  const user = c.get('user');
+  if (c.get('share')) throw forbidden('Réservé à la console.');
+  if (!classificationAvailable()) {
+    return c.json({ available: false, type: null, confidence: null });
+  }
+
+  const { data: session } = await db
+    .from('signing_sessions')
+    .select('*')
+    .eq('id', c.req.param('id'))
+    .eq('owner_id', user.id)
+    .maybeSingle<SessionRow>();
+  if (!session) throw notFound('Session introuvable.');
+  assertShareScope(c.get('share'), session.folder_id);
+
+  const parsed = classifyMarkSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) throw badRequest('Zone invalide.', 'BAD_REQUEST', parsed.error.issues);
+
+  const path = session.photo_path;
+  if (!path) throw badRequest('Aucune photo pour cette session.', 'IMAGE_PROCESSING_FAILED');
+  const photo = await downloadObject(path);
+  const size =
+    !session.photo_width || !session.photo_height
+      ? await imageSize(photo)
+      : { width: session.photo_width, height: session.photo_height };
+  const crop = await cropNormalizedRegion(photo, parsed.data.region, size.width, size.height);
+
+  const result = await classifyMark(crop);
+  return c.json({ available: true, ...result });
+});
+
 sessionRoutes.post('/signing-sessions/:id/preview-cutout', async (c) => {
   const user = c.get('user');
   const { data: session } = await db

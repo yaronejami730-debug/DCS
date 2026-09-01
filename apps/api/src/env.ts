@@ -72,6 +72,14 @@ const envSchema = z.object({
    */
   PROCESS_INLINE: bool(false),
   /**
+   * Claude vision key for auto-recognising a framed mark's type (signature,
+   * stamp, mention, date…). Optional: with no key the feature is simply off —
+   * the operator still picks the type by hand — so the app runs without it.
+   */
+  ANTHROPIC_API_KEY: z.string().optional(),
+  /** Model for mark classification. Opus by default; set to a cheaper id to cut cost. */
+  MARK_CLASSIFY_MODEL: z.string().default('claude-opus-5'),
+  /**
    * Where the signing app is served, used to assemble share links.
    *
    * Every link the console shows is built from this, so a wrong value here
