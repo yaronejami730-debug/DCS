@@ -353,7 +353,7 @@ export const CropReturnPage = () => {
         }
       })();
 
-      // Fresh session for the next contract, same page.
+      // Move to the next unserved contract on the same scan page.
       setRegions({});
       setCurrent(null);
       setResetToken((n) => n + 1);
@@ -361,7 +361,9 @@ export const CropReturnPage = () => {
       const servedIds = new Set([...served.map((s) => s.id), targetDoc]);
       const nextDoc = contracts.find((d) => !servedIds.has(d.id));
       setTargetDoc(nextDoc?.id ?? '');
-      if (pageBlob) {
+      // Only open a fresh session when there is a document left to place on —
+      // a session with nothing to receive it would sit unused.
+      if (nextDoc && pageBlob) {
         const created = await startSession.mutateAsync({
           folderId,
           returnId,
@@ -470,19 +472,38 @@ export const CropReturnPage = () => {
               document. The document comes first because it is the decision;
               the marks are the work.
             */}
-            <Select
-              label="Pour quel document ?"
-              value={targetDoc}
-              onChange={(e) => setTargetDoc(e.target.value)}
-            >
-              <option value="">— choisir —</option>
-              {contracts.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {served.some((s) => s.id === d.id) ? '✓ ' : ''}
-                  {d.filename}
-                </option>
-              ))}
-            </Select>
+            {(() => {
+              // Only documents not yet handled: a signed one leaves the list so
+              // what remains is exactly what is still to do. Once every contract
+              // is served the picker is replaced by a done state.
+              const servedIds = new Set(served.map((sv) => sv.id));
+              const remaining = contracts.filter((d) => !servedIds.has(d.id));
+              if (remaining.length === 0) {
+                return (
+                  <div className="rounded-lg bg-emerald-50 p-3.5 text-center">
+                    <p className="text-sm font-semibold text-emerald-800">
+                      Tous les documents ont été traités ✓
+                    </p>
+                  </div>
+                );
+              }
+              return (
+                <Select
+                  label={`Pour quel document ? (${remaining.length} restant${
+                    remaining.length > 1 ? 's' : ''
+                  })`}
+                  value={targetDoc}
+                  onChange={(e) => setTargetDoc(e.target.value)}
+                >
+                  <option value="">— choisir —</option>
+                  {remaining.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.filename}
+                    </option>
+                  ))}
+                </Select>
+              );
+            })()}
 
             <div className="mt-3">
               {!targetDoc ? (
