@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "pnpm --filter @scansign/signer build",
+  "outputDirectory": "dist",
+  "installCommand": "pnpm install --frozen-lockfile=false",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}

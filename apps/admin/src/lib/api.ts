@@ -1,6 +1,44 @@
 import type { ApiError, AuthSession } from '@scansign/shared';
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8787';
+/**
+ * Where the backend is, from wherever the console was opened.
+ *
+ * `VITE_API_URL` names it, but its default — and its usual value — is
+ * `localhost:8787`, which is correct only when the console is open on the
+ * machine running the API. Open it from a phone or another laptop on the LAN,
+ * via the machine's IP, and `localhost` becomes *that* device: every request,
+ * the login included, dies at a connection refused with no useful error, and
+ * the page just says "Connexion impossible".
+ *
+ * So when the page itself was not served from a loopback host but the
+ * configured API is a loopback one, the page's own hostname is the better
+ * guess. Same rule the signer app uses.
+ */
+const resolveApiUrl = (): string => {
+  const configured = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '');
+  const raw = configured || 'http://localhost:8787';
+
+  if (typeof window === 'undefined') return raw;
+  const here = window.location.hostname;
+  const isLoopbackHere = here === 'localhost' || here === '127.0.0.1' || here === '[::1]';
+  if (isLoopbackHere) return raw;
+
+  try {
+    const url = new URL(raw);
+    const isLoopbackThere =
+      url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+    if (!isLoopbackThere) return raw;
+    url.hostname = here;
+    // A page served over HTTPS cannot call a plain-HTTP API — the browser
+    // blocks it as mixed content, silently. Follow the page's scheme.
+    url.protocol = window.location.protocol;
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return raw;
+  }
+};
+
+const API_URL = resolveApiUrl();
 const STORAGE_KEY = 'scansign.session';
 
 export class ApiRequestError extends Error {

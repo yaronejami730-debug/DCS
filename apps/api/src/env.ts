@@ -61,6 +61,17 @@ const envSchema = z.object({
   API_HOST: z.string().default('0.0.0.0'),
   API_PUBLIC_URL: z.string().default('http://localhost:8787'),
   /**
+   * Process a signing session inline, awaiting it before responding, instead of
+   * running it in the in-process queue after the response.
+   *
+   * The queue relies on the process staying alive after it answers — true for a
+   * long-running Node server, false for a serverless function, which freezes
+   * the moment the response is sent and would leave every session stuck in
+   * 'processing'. Set this on Vercel; leave it off for the standalone server,
+   * where the queue keeps the request fast.
+   */
+  PROCESS_INLINE: bool(false),
+  /**
    * Where the signing app is served, used to assemble share links.
    *
    * Every link the console shows is built from this, so a wrong value here

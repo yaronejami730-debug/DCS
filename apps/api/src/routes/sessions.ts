@@ -560,15 +560,27 @@ sessionRoutes.post('/signing-sessions/:id/regions', async (c) => {
     .select('*')
     .single<SessionRow>();
 
-  enqueue(`session:${session.id}`, () =>
+  const run = () =>
     processSigningSession(session.id, {
       signature: parsed.data.signature,
       stamp: parsed.data.stamp ?? null,
       mention: parsed.data.mention ?? null,
       signature_stamp: parsed.data.signature_stamp ?? null,
       assignments: parsed.data.assignments,
-    }),
-  );
+    });
+
+  /**
+   * On a long-running server the job goes to the queue and the client gets an
+   * immediate 202, then polls. On serverless the process dies the instant this
+   * handler returns, killing a queued job mid-extraction, so there the work is
+   * awaited before responding — see PROCESS_INLINE. The client polls either
+   * way; inline it simply finds the session already done on its first poll.
+   */
+  if (env.PROCESS_INLINE) {
+    await run();
+  } else {
+    enqueue(`session:${session.id}`, run);
+  }
 
   await audit({
     ownerId: user.id,
