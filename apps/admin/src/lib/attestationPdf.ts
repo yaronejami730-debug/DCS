@@ -338,7 +338,7 @@ export const generateAttestationPdf = async (
     }
     // mention conditionnelle
     if (doc.showApproval) {
-      const m = safe('Mention : « Lu et approuvé »');
+      const m = safe('Mention : « Lu et approuvé, bon pour accord »');
       const mw = italic.widthOfTextAtSize(m, 10);
       page.drawLine({
         start: { x: sx + 12, y: zoneTop - zoneH + 30 },

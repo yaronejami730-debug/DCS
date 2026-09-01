@@ -242,7 +242,7 @@ export const AttestationPage = () => {
                       onChange={(e) => setDoc(i, { showApproval: e.target.checked })}
                       className="h-3.5 w-3.5 rounded border-ink-300 accent-brand-600"
                     />
-                    « Lu et approuvé »
+                    « Lu et approuvé, bon pour accord »
                   </label>
                 </div>
               </div>
@@ -358,7 +358,7 @@ export const AttestationPage = () => {
                     onChange={(e) => setDoc(editing, { showApproval: e.target.checked })}
                     className="h-4 w-4 rounded border-ink-300 accent-brand-600"
                   />
-                  Mention « Lu et approuvé »
+                  Mention « Lu et approuvé, bon pour accord »
                 </label>
               </div>
             </div>
