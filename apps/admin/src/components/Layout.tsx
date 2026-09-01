@@ -7,6 +7,7 @@ const NAV = [
   { to: '/dashboard', label: 'Tableau de bord' },
   { to: '/folders', label: 'Dossiers' },
   { to: '/templates', label: 'Templates' },
+  { to: '/attestation', label: 'Attestation simplifiée' },
 ];
 
 export const Layout = () => {
