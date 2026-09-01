@@ -26,6 +26,9 @@ export interface AttestationDoc {
   type: string;
   concerned: string;
   showApproval: boolean;
+  /** What the signature box asks for. At least one must be true. */
+  wantSignature: boolean;
+  wantStamp: boolean;
 }
 
 const A4 = { w: 595.28, h: 841.89 };
@@ -242,8 +245,17 @@ export const generateAttestationPdf = async (
       });
     }
 
-    // Signature (droite)
+    // Signature / cachet (droite) — le titre et le découpage suivent ce qui est demandé.
     const sx = MARGIN + colW + gap;
+    const wantSig = doc.wantSignature;
+    const wantStamp = doc.wantStamp;
+    const both = wantSig && wantStamp;
+    const sigTitle = both
+      ? 'Signature manuscrite du dirigeant et cachet de la société'
+      : wantStamp
+        ? 'Cachet de la société'
+        : 'Signature manuscrite du dirigeant';
+
     page.drawRectangle({
       x: sx,
       y: zoneTop - zoneH,
@@ -254,7 +266,6 @@ export const generateAttestationPdf = async (
     });
     // bandeau titre
     page.drawRectangle({ x: sx, y: zoneTop - 28, width: colW, height: 28, color: GREEN });
-    const sigTitle = 'Signature manuscrite du dirigeant et cachet de la société';
     const sigLines = wrap(sigTitle, bold, 8.5, colW - 16);
     let sty = zoneTop - 11;
     for (const line of sigLines) {
@@ -267,6 +278,35 @@ export const generateAttestationPdf = async (
         color: rgb(1, 1, 1),
       });
       sty -= 11;
+    }
+
+    // When both are asked for, split the box into two labelled halves so the
+    // signer knows which goes where. When only one, the single title above is
+    // enough and the whole box is its space.
+    if (both) {
+      const bandBottom = zoneTop - 28; // under the title band
+      const midY = (bandBottom + (zoneTop - zoneH)) / 2;
+      page.drawLine({
+        start: { x: sx + 10, y: midY },
+        end: { x: sx + colW - 10, y: midY },
+        thickness: 0.6,
+        color: LINE,
+        dashArray: [3, 3],
+      });
+      page.drawText(safe('Signature'), {
+        x: sx + 12,
+        y: bandBottom - 14,
+        size: 8,
+        font,
+        color: BLUEGREY,
+      });
+      page.drawText(safe('Cachet'), {
+        x: sx + 12,
+        y: midY - 14,
+        size: 8,
+        font,
+        color: BLUEGREY,
+      });
     }
     // mention conditionnelle
     if (doc.showApproval) {

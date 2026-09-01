@@ -31,7 +31,7 @@ export const AttestationPage = () => {
     siren: '',
   });
   const [docs, setDocs] = useState<AttestationDoc[]>([
-    { type: 'Devis', concerned: '', showApproval: true },
+    { type: 'Devis', concerned: '', showApproval: true, wantSignature: true, wantStamp: true },
   ]);
   const [newType, setNewType] = useState<string>(TYPES[0]!);
   const [busy, setBusy] = useState(false);
@@ -40,7 +40,7 @@ export const AttestationPage = () => {
   const seedFromFolder = () => {
     const seeded = (folder?.documents ?? [])
       .filter((d) => d.role !== 'for_signing')
-      .map<AttestationDoc>((d) => ({ type: 'Autre document', concerned: d.filename, showApproval: true }));
+      .map<AttestationDoc>((d) => ({ type: 'Autre document', concerned: d.filename, showApproval: true, wantSignature: true, wantStamp: true }));
     if (seeded.length > 0) setDocs(seeded);
   };
 
@@ -149,15 +149,46 @@ export const AttestationPage = () => {
                   placeholder="Document concerné (ex. Devis n° 1048)"
                   className="mt-2 w-full rounded-lg bg-white px-2.5 py-1.5 text-sm ring-1 ring-ink-200 outline-none focus:ring-2 focus:ring-brand-500"
                 />
-                <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-ink-600">
-                  <input
-                    type="checkbox"
-                    checked={doc.showApproval}
-                    onChange={(e) => setDoc(i, { showApproval: e.target.checked })}
-                    className="h-3.5 w-3.5 rounded border-ink-300 accent-brand-600"
-                  />
-                  Afficher la mention « Lu et approuvé »
-                </label>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-600">
+                    <input
+                      type="checkbox"
+                      checked={doc.wantSignature}
+                      onChange={(e) =>
+                        setDoc(i, {
+                          wantSignature: e.target.checked,
+                          // Never leave a box asking for nothing.
+                          wantStamp: e.target.checked ? doc.wantStamp : true,
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded border-ink-300 accent-brand-600"
+                    />
+                    Signature manuscrite
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-600">
+                    <input
+                      type="checkbox"
+                      checked={doc.wantStamp}
+                      onChange={(e) =>
+                        setDoc(i, {
+                          wantStamp: e.target.checked,
+                          wantSignature: e.target.checked ? doc.wantSignature : true,
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded border-ink-300 accent-brand-600"
+                    />
+                    Cachet de la société
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-600">
+                    <input
+                      type="checkbox"
+                      checked={doc.showApproval}
+                      onChange={(e) => setDoc(i, { showApproval: e.target.checked })}
+                      className="h-3.5 w-3.5 rounded border-ink-300 accent-brand-600"
+                    />
+                    « Lu et approuvé »
+                  </label>
+                </div>
               </div>
             ))}
           </div>
@@ -175,7 +206,7 @@ export const AttestationPage = () => {
             <Button
               variant="secondary"
               onClick={() =>
-                setDocs((prev) => [...prev, { type: newType, concerned: '', showApproval: false }])
+                setDocs((prev) => [...prev, { type: newType, concerned: '', showApproval: false, wantSignature: true, wantStamp: true }])
               }
             >
               Ajouter ce document
