@@ -27,8 +27,16 @@ import {
 
 /** Visible size of a corner marker, in CSS pixels. */
 const HANDLE_SIZE = 24;
-/** Touch radius around a corner — a fingertip is ~44px, the marker is 24. */
-const HANDLE_HIT = 46;
+/**
+ * Grab radius around a corner, by pointer.
+ *
+ * A fingertip needs ~44px of slack; a mouse cursor is a point and giving it
+ * the same halo made small boxes ungrabbable — everywhere inside was "near a
+ * corner", so every drag resized instead of moving. The radius follows what
+ * is actually pointing.
+ */
+const HANDLE_HIT_TOUCH = 46;
+const HANDLE_HIT_MOUSE = 14;
 
 export interface RegionSelectorProps {
   photoUrl: string;
@@ -92,6 +100,8 @@ export const RegionSelector = ({
   const [rect, setRect] = useState<NormalizedRect>(value ?? defaultRect);
   const [dragging, setDragging] = useState(false);
   const [mode, setMode] = useState<Mode | null>(null);
+  /** What the cursor is over, when NOT dragging — drives the mouse cursor. */
+  const [hover, setHover] = useState<Mode | null>(null);
 
   // --- everything the gesture handlers read, held in refs -------------------
   const rectRef = useRef(rect);
@@ -164,16 +174,13 @@ export const RegionSelector = ({
     };
   };
 
-  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    const point = pointAt(event);
-    if (!point) return;
-
-    // Capture, so the drag survives the pointer leaving the image — which is
-    // exactly what happens when a corner is pulled towards the edge.
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
-
+  /** What a pointer at this spot would grab: a corner, the box, or fresh canvas. */
+  const pick = (
+    point: { x: number; y: number; width: number; height: number },
+    pointerType: string,
+  ): Mode => {
     const current = rectRef.current;
+    const radius = pointerType === 'touch' ? HANDLE_HIT_TOUCH : HANDLE_HIT_MOUSE;
     const corners: Array<{ mode: RectCorner; x: number; y: number }> = [
       { mode: 'nw', x: current.x, y: current.y },
       { mode: 'ne', x: current.x + current.width, y: current.y },
@@ -188,7 +195,7 @@ export const RegionSelector = ({
         (point.x - corner.x) * point.width,
         (point.y - corner.y) * point.height,
       );
-      if (distance < HANDLE_HIT && distance < closest) {
+      if (distance < radius && distance < closest) {
         closest = distance;
         picked = corner.mode;
       }
@@ -202,8 +209,20 @@ export const RegionSelector = ({
         point.y <= current.y + current.height;
       if (inside) picked = 'move';
     }
+    return picked;
+  };
 
-    startRef.current = { rect: current, mode: picked, x: point.x, y: point.y };
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const point = pointAt(event);
+    if (!point) return;
+
+    // Capture, so the drag survives the pointer leaving the image — which is
+    // exactly what happens when a corner is pulled towards the edge.
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+
+    const picked = pick(point, event.pointerType);
+    startRef.current = { rect: rectRef.current, mode: picked, x: point.x, y: point.y };
     draggingRef.current = true;
     setDragging(true);
     setMode(picked);
@@ -211,7 +230,15 @@ export const RegionSelector = ({
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const start = startRef.current;
-    if (!start) return;
+    if (!start) {
+      // Not dragging: track what is under the mouse, so the cursor says what
+      // a press would do — grab, resize, or draw. The corner markers cannot
+      // carry their own CSS cursors, sitting as they do in a pointer-events:
+      // none overlay.
+      const point = pointAt(event);
+      if (point && event.pointerType !== 'touch') setHover(pick(point, event.pointerType));
+      return;
+    }
     const point = pointAt(event);
     if (!point) return;
     event.preventDefault();
@@ -285,8 +312,23 @@ export const RegionSelector = ({
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onPointerLeave={() => setHover(null)}
         className="relative mx-auto touch-none overflow-hidden rounded-xl bg-black select-none"
-        style={{ width: boxWidth, height: boxHeight, cursor: dragging ? 'grabbing' : 'crosshair' }}
+        style={{
+          width: boxWidth,
+          height: boxHeight,
+          cursor: dragging
+            ? mode === 'move'
+              ? 'grabbing'
+              : 'crosshair'
+            : hover === 'move'
+              ? 'grab'
+              : hover === 'nw' || hover === 'se'
+                ? 'nwse-resize'
+                : hover === 'ne' || hover === 'sw'
+                  ? 'nesw-resize'
+                  : 'crosshair',
+        }}
       >
         <img
           src={photoUrl}
