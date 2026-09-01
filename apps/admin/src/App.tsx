@@ -11,6 +11,7 @@ import { DocumentPlacementPage } from './pages/DocumentPlacement';
 import { FolderComparisonPage } from './pages/FolderComparison';
 import { CropReturnPage } from './pages/CropReturn';
 import { AttestationPage } from './pages/Attestation';
+import { GuidePage } from './pages/Guide';
 
 export const App = () => {
   const { session } = useAuth();
@@ -35,6 +36,7 @@ export const App = () => {
         {/* Crop the marks out of a page a technician sent back. */}
         <Route path="/folders/:id/reception/:returnId" element={<CropReturnPage />} />
         <Route path="/attestation" element={<AttestationPage />} />
+        <Route path="/guide" element={<GuidePage />} />
         <Route path="/templates" element={<TemplatesPage />} />
         <Route path="/templates/:id" element={<TemplateEditorPage />} />
         <Route path="/documents/:id/placement" element={<DocumentPlacementPage />} />

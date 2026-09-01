@@ -8,6 +8,7 @@ const NAV = [
   { to: '/folders', label: 'Dossiers' },
   { to: '/templates', label: 'Templates' },
   { to: '/attestation', label: 'Attestation simplifiée' },
+  { to: '/guide', label: 'Guide' },
 ];
 
 export const Layout = () => {
