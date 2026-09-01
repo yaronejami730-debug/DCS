@@ -175,6 +175,14 @@ export const CropReturnPage = () => {
    */
   const urlRef = useRef<string | undefined>(item?.url);
   urlRef.current = item?.url;
+  /** The local object URL currently shown, revoked when replaced or on unmount. */
+  const localUrlRef = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      if (localUrlRef.current) URL.revokeObjectURL(localUrlRef.current);
+    },
+    [],
+  );
 
   // First unserved contract is the natural next target.
   useEffect(() => {
@@ -197,6 +205,10 @@ export const CropReturnPage = () => {
     preparedFor.current = key;
 
     let cancelled = false;
+    if (localUrlRef.current) {
+      URL.revokeObjectURL(localUrlRef.current);
+      localUrlRef.current = null;
+    }
 
     /**
      * A hard ceiling on preparation.
@@ -225,7 +237,7 @@ export const CropReturnPage = () => {
       setRegions({});
       setCurrent(null);
       try {
-        setPrepareStep('Téléchargement du scan…');
+        setPrepareStep('Ouverture du scan…');
         const url = urlRef.current;
         if (!url) throw new Error('URL du scan indisponible');
         const blob =
@@ -235,21 +247,54 @@ export const CropReturnPage = () => {
         if (cancelled) return;
         setPageBlob(blob);
 
-        setPrepareStep('Envoi et préparation… (quelques secondes au premier chargement)');
-        const created = await startSession.mutateAsync({ folderId, returnId: item.id, page: blob });
-        if (cancelled) return;
-        setSessionId(created.session.id);
-        if (created.photo) setPhoto(created.photo);
+        /**
+         * Show the frame at once, from the blob we already hold.
+         *
+         * The old flow waited for the upload, the server re-encode and a signed
+         * URL round-trip — ten seconds of spinner before the operator could
+         * touch anything. But framing only needs the pixels, which are already
+         * here. So the image is shown from a local object URL immediately and
+         * the session is opened in the background; only the cutout preview and
+         * the apply button wait on it, and by the time the operator has drawn a
+         * box it has long since arrived.
+         */
+        const bitmap = await createImageBitmap(blob);
+        if (cancelled) {
+          bitmap.close();
+          return;
+        }
+        const localUrl = URL.createObjectURL(blob);
+        localUrlRef.current = localUrl;
+        setPhoto({ url: localUrl, width: bitmap.width, height: bitmap.height });
+        bitmap.close();
+        setPreparing(false);
+        clearTimeout(deadline);
+
+        // Background: open the signing session on the same blob.
+        startSession
+          .mutateAsync({ folderId, returnId: item.id, page: blob })
+          .then((created) => {
+            if (!cancelled) setSessionId(created.session.id);
+          })
+          .catch((e) => {
+            if (!cancelled) {
+              setError(
+                e instanceof ApiRequestError
+                  ? e.message
+                  : "La préparation du détourage a échoué. Réessayez.",
+              );
+              preparedFor.current = null;
+            }
+          });
       } catch (e) {
         if (!cancelled) {
           setError(
             e instanceof ApiRequestError ? e.message : "Cette page n'a pas pu être préparée.",
           );
           preparedFor.current = null;
+          clearTimeout(deadline);
+          setPreparing(false);
         }
-      } finally {
-        clearTimeout(deadline);
-        if (!cancelled) setPreparing(false);
       }
     };
     void run();
