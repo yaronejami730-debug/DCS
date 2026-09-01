@@ -3,12 +3,5 @@
   "installCommand": "pnpm install --frozen-lockfile=false",
   "buildCommand": "node build-vercel.mjs",
   "outputDirectory": "public",
-  "functions": {
-    "api/index.js": {
-      "maxDuration": 300,
-      "memory": 1024,
-      "includeFiles": "node_modules/sharp/**"
-    }
-  },
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]
 }

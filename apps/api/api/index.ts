@@ -19,6 +19,11 @@ import { createApp } from '../src/app.js';
 export const config = {
   // The Node runtime, not Edge: sharp and pdf generation need real Node.
   runtime: 'nodejs',
+  // Declared here rather than in vercel.json's `functions` block: that block
+  // is validated before the build runs, and this function only exists after
+  // the build has bundled it. Inline signing work needs the headroom.
+  maxDuration: 300,
+  memory: 1024,
 };
 
 export default handle(createApp());
