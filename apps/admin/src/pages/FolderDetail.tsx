@@ -10,6 +10,7 @@ import {
   useTemplates,
 } from '../lib/queries';
 import { api, ApiRequestError } from '../lib/api';
+import { buildZip, downloadBlob, safeFilename } from '../lib/zip';
 import { Page } from '../components/Layout';
 import { ShareLinkPanel } from '../components/ShareLinkPanel';
 import { PhoneHandoff } from '../components/PhoneHandoff';
@@ -38,6 +39,35 @@ export const FolderDetailPage = () => {
   const { data: folder, isLoading } = useFolder(id);
   const { data: templates } = useTemplates();
   const removeDocument = useDeleteDocument();
+  const [zipping, setZipping] = useState(false);
+
+  /**
+   * Every signed PDF of the selection — or of the folder, with nothing ticked —
+   * as one .zip named after the client, each document its own file inside.
+   * What the operator drops into a mail, ready for whoever must receive it.
+   */
+  const downloadSignedZip = async (docs: Document[], folderName: string) => {
+    setZipping(true);
+    setError(null);
+    try {
+      const entries = [];
+      const seen = new Map<string, number>();
+      for (const doc of docs) {
+        const { url, filename } = await finalPdfUrl(doc.id);
+        const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+        // Two documents may share a filename; the archive must not.
+        const n = (seen.get(filename) ?? 0) + 1;
+        seen.set(filename, n);
+        const name = n === 1 ? filename : filename.replace(/(\.pdf)?$/i, ` (${n})$1`);
+        entries.push({ name: safeFilename(name, 'document.pdf'), data: bytes });
+      }
+      downloadBlob(buildZip(entries), `${safeFilename(folderName)}.zip`);
+    } catch (e) {
+      setError(e instanceof ApiRequestError ? e.message : 'Téléchargement groupé impossible.');
+    } finally {
+      setZipping(false);
+    }
+  };
   /**
    * Documents ticked for comparison.
    *
@@ -191,6 +221,23 @@ export const FolderDetailPage = () => {
           {/* Always reachable once there are two documents: gating it behind a
               selection made it invisible to anyone who had not noticed the
               checkboxes. With nothing ticked it compares the whole folder. */}
+          {(() => {
+            const signed = documents.filter((d) => d.status === 'completed');
+            const chosen = signed.filter((d) => compare.includes(d.id));
+            const targets = chosen.length > 0 ? chosen : signed;
+            if (targets.length === 0) return null;
+            return (
+              <Button
+                variant="secondary"
+                loading={zipping}
+                onClick={() => void downloadSignedZip(targets, folder.name)}
+              >
+                {chosen.length > 0
+                  ? `Télécharger ${chosen.length} PDF signé${chosen.length > 1 ? 's' : ''} (.zip)`
+                  : `Télécharger les ${signed.length} PDF signé${signed.length > 1 ? 's' : ''} (.zip)`}
+              </Button>
+            );
+          })()}
           {documents.length >= 2 && (
             <Link
               to={`/folders/${folder.id}/comparer${

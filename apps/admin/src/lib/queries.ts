@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CutoutPreview,
+  DashboardInsights,
   DashboardStats,
   Document,
   DocumentRole,
@@ -30,6 +31,13 @@ const LIVE = { refetchInterval: 4000 } as const;
 
 export const useDashboard = () =>
   useQuery({ queryKey: ['dashboard'], queryFn: () => api<DashboardStats>('/dashboard'), ...LIVE });
+
+export const useDashboardInsights = () =>
+  useQuery({
+    queryKey: ['dashboard-insights'],
+    queryFn: () => api<DashboardInsights>('/dashboard/insights'),
+    refetchInterval: 60_000,
+  });
 
 export const useActivity = () =>
   useQuery({

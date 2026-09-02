@@ -225,5 +225,24 @@ export interface DashboardStats {
   errors: number;
 }
 
+/** The dashboard's second row: trends, folder health, and what remove.bg has left. */
+export interface DashboardInsights {
+  /** Signed documents per day, oldest first, `days` entries ending today. */
+  signedPerDay: Array<{ day: string; count: number }>;
+  signedLast7: number;
+  signedLast30: number;
+  foldersByStatus: Record<FolderStatus, number>;
+  templates: number;
+  /** Returned pages nobody has cropped yet. */
+  pendingReturns: number;
+  /** remove.bg account credits, null when no key or the call failed. */
+  removeBg: {
+    total: number;
+    subscription: number;
+    payg: number;
+    freeCalls: number;
+  } | null;
+}
+
 /** How long a share link stays usable unless the operator says otherwise. */
 export const SHARE_LINK_TTL_DAYS = 30;
