@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useCreateFolder, useDeleteFolder, useFolders } from '../lib/queries';
 import { ApiRequestError } from '../lib/api';
 import { matchesSearch } from '../lib/search';
-import { SearchBox } from '../components/SearchBox';
+import { ClientSearch } from '../components/ClientSearch';
 import { Page } from '../components/Layout';
 import {
   Button,
@@ -65,7 +65,7 @@ export const FoldersPage = () => {
         </Card>
       ) : (
         <>
-        <SearchBox value={query} onChange={setQuery} className="mb-4 max-w-xl" autoFocus />
+        <ClientSearch onFilter={setQuery} className="mb-4 max-w-2xl" autoFocus />
         <Card>
           {shown.length === 0 && (
             <p className="px-5 py-8 text-center text-sm text-ink-400">

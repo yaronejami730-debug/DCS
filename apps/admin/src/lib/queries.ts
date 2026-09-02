@@ -105,10 +105,37 @@ export const useInvalidate = () => {
   };
 };
 
+/** A client the search box can turn into a folder — from the CRM, or a folder already here. */
+export interface ClientSuggestion {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  city: string | null;
+  source: 'qhare' | 'folder';
+  folderId?: string;
+  crmLeadId?: string;
+  detail?: string | null;
+}
+
+export interface ClientSearchResult {
+  items: ClientSuggestion[];
+  crm: { name: string; configured: boolean; leads: number; error: string | null };
+}
+
+/** The URL Qhare must call: shown once in the console, pasted once in Qhare. */
+export const useQhareWebhook = (enabled: boolean) =>
+  useQuery({
+    queryKey: ['qhare-webhook'],
+    queryFn: () => api<{ url: string; provider: string }>('/clients/webhook'),
+    enabled,
+    staleTime: Infinity,
+  });
+
 export const useCreateFolder = () => {
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: (input: { name: string }) =>
+    mutationFn: (input: { name: string; crmLeadId?: string | null }) =>
       api<Folder>('/folders', { method: 'POST', json: input }),
     onSuccess: () => invalidate('folders', 'dashboard'),
   });

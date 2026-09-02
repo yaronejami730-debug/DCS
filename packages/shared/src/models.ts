@@ -105,6 +105,8 @@ export interface Folder {
   /** Short human reference shown as DOSSIER #000123. */
   reference: number;
   name: string;
+  /** Qhare lead id, when the folder was created from a CRM client. */
+  crmLeadId?: string | null;
   status: FolderStatus;
   errorCode: ErrorCode | null;
   errorMessage: string | null;

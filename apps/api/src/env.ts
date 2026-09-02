@@ -105,6 +105,13 @@ const envSchema = z.object({
    * opt-in per request and never used by the batch that signs documents.
    */
   REMOVEBG_API_KEY: z.string().optional(),
+
+  // Qhare CRM connector — see services/crm/qhare.ts. All optional: without a
+  // URL and a key the client search simply says the CRM is not connected.
+  QHARE_API_URL: z.string().url().optional(),
+  QHARE_API_KEY: z.string().optional(),
+  QHARE_AUTH_HEADER: z.string().optional(),
+  QHARE_SEARCH_PATH: z.string().optional(),
   REMOVEBG_SIZE: z.enum(['preview', 'small', 'regular', 'medium', 'hd', 'full', 'auto']).default('auto'),
 
   /**

@@ -162,6 +162,7 @@ folderRoutes.post('/', async (c) => {
     .insert({
       owner_id: user.id,
       name: parsed.data.name,
+      crm_lead_id: parsed.data.crmLeadId ?? null,
     })
     .select(FOLDER_SELECT)
     .single<FolderRow>();

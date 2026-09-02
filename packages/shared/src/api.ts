@@ -56,6 +56,8 @@ export type ImportDocumentsInput = z.infer<typeof importDocumentsSchema>;
 
 export const createFolderSchema = z.object({
   name: z.string().min(1).max(160),
+  /** The CRM lead this folder is for, when created from the client search. */
+  crmLeadId: z.string().max(64).nullable().optional(),
 });
 export type CreateFolderInput = z.infer<typeof createFolderSchema>;
 

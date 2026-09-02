@@ -4,7 +4,7 @@ import { FOLDER_STATUS_LABEL, type Folder, type FolderStatus } from '@scansign/s
 import { useDashboard, useDashboardInsights, useFolders } from '../lib/queries';
 import { Page } from '../components/Layout';
 import { Card, FolderStatusPill, Spinner, folderReference, formatDate, timeAgo } from '../components/ui';
-import { SearchBox } from '../components/SearchBox';
+import { ClientSearch } from '../components/ClientSearch';
 import { matchesSearch } from '../lib/search';
 
 /**
@@ -240,7 +240,7 @@ export const DashboardPage = () => {
       </div>
 
       <div className="mt-6 space-y-4">
-        <SearchBox value={query} onChange={setQuery} className="max-w-xl" />
+        <ClientSearch onFilter={setQuery} className="max-w-2xl" />
         <FolderList
           title="Dossiers en attente"
           folders={waiting}

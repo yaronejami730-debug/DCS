@@ -5,6 +5,7 @@ export interface FolderRow {
   owner_id: string;
   reference: number;
   name: string;
+  crm_lead_id?: string | null;
   status: Folder['status'];
   error_code: string | null;
   error_message: string | null;
@@ -64,6 +65,7 @@ export const toFolder = (row: FolderRow): Folder => ({
   id: row.id,
   ownerId: row.owner_id,
   reference: Number(row.reference),
+  crmLeadId: row.crm_lead_id ?? null,
   name: row.name,
   status: row.status,
   errorCode: (row.error_code as Folder['errorCode']) ?? null,
