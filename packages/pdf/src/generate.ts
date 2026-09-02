@@ -34,6 +34,7 @@ export interface GenerateSignedPdfInput {
   /** Extended handwritten marks, keyed like their zones. */
   datePng?: Uint8Array | null;
   quoteDatePng?: Uint8Array | null;
+  invoiceDatePng?: Uint8Array | null;
   freeTextPng?: Uint8Array | null;
   checkboxPng?: Uint8Array | null;
   /**
@@ -123,6 +124,7 @@ export const generateSignedPdf = async (
     ['signature_stamp', input.combinedPng, 'COMBINED_EXTRACTION_FAILED', 'un tampon signé'],
     ['date', input.datePng, 'MARK_EXTRACTION_FAILED', 'une date'],
     ['quote_date', input.quoteDatePng, 'MARK_EXTRACTION_FAILED', 'une date de devis'],
+    ['invoice_date', input.invoiceDatePng, 'MARK_EXTRACTION_FAILED', 'une date de facture'],
     ['free_text', input.freeTextPng, 'MARK_EXTRACTION_FAILED', 'un texte'],
     ['checkbox', input.checkboxPng, 'MARK_EXTRACTION_FAILED', 'une case cochée'],
   ];
@@ -142,6 +144,7 @@ export const generateSignedPdf = async (
     signature_stamp: input.combinedPng?.length ? await doc.embedPng(input.combinedPng) : null,
     date: input.datePng?.length ? await doc.embedPng(input.datePng) : null,
     quote_date: input.quoteDatePng?.length ? await doc.embedPng(input.quoteDatePng) : null,
+    invoice_date: input.invoiceDatePng?.length ? await doc.embedPng(input.invoiceDatePng) : null,
     free_text: input.freeTextPng?.length ? await doc.embedPng(input.freeTextPng) : null,
     checkbox: input.checkboxPng?.length ? await doc.embedPng(input.checkboxPng) : null,
   };

@@ -76,10 +76,12 @@ interface SessionRow {
   mention_photo_path: string | null;
   date_photo_path?: string | null;
   quote_date_photo_path?: string | null;
+  invoice_date_photo_path?: string | null;
   free_text_photo_path?: string | null;
   checkbox_photo_path?: string | null;
   date_image_path?: string | null;
   quote_date_image_path?: string | null;
+  invoice_date_image_path?: string | null;
   free_text_image_path?: string | null;
   checkbox_image_path?: string | null;
   error_code: string | null;
@@ -102,6 +104,7 @@ const toModel = (row: SessionRow): SigningSession => ({
   signatureStampImagePath: row.signature_stamp_image_path,
   dateImagePath: row.date_image_path ?? null,
   quoteDateImagePath: row.quote_date_image_path ?? null,
+  invoiceDateImagePath: row.invoice_date_image_path ?? null,
   freeTextImagePath: row.free_text_image_path ?? null,
   checkboxImagePath: row.checkbox_image_path ?? null,
   errorCode: (row.error_code as SigningSession['errorCode']) ?? null,
@@ -595,6 +598,7 @@ sessionRoutes.post('/signing-sessions/:id/preview-variants', async (c) => {
     signature_stamp: session.signature_stamp_photo_path,
     date: session.date_photo_path,
     quote_date: session.quote_date_photo_path,
+    invoice_date: session.invoice_date_photo_path,
     free_text: session.free_text_photo_path,
     checkbox: session.checkbox_photo_path,
   };
@@ -660,6 +664,7 @@ sessionRoutes.post('/signing-sessions/:id/regions', async (c) => {
       signature_stamp: session.signature_stamp_photo_path,
       date: session.date_photo_path ?? null,
       quote_date: session.quote_date_photo_path ?? null,
+      invoice_date: session.invoice_date_photo_path ?? null,
       free_text: session.free_text_photo_path ?? null,
       checkbox: session.checkbox_photo_path ?? null,
     };
@@ -710,6 +715,7 @@ sessionRoutes.post('/signing-sessions/:id/regions', async (c) => {
       signature_stamp: parsed.data.signature_stamp ?? null,
       date: parsed.data.date ?? null,
       quote_date: parsed.data.quote_date ?? null,
+      invoice_date: parsed.data.invoice_date ?? null,
       free_text: parsed.data.free_text ?? null,
       checkbox: parsed.data.checkbox ?? null,
       assignments: parsed.data.assignments,

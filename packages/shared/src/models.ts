@@ -138,6 +138,8 @@ export interface Document {
    * to reposition the mark: there is no way to know which signature to reuse.
    */
   signingSessionId?: string | null;
+  /** When the signed PDF was produced, from the session that stamped it. */
+  signedAt?: string | null;
   template?: Pick<Template, 'id' | 'name' | 'sheetField'> | null;
 }
 
@@ -197,6 +199,7 @@ export interface SigningSession {
   signatureStampImagePath: string | null;
   dateImagePath?: string | null;
   quoteDateImagePath?: string | null;
+  invoiceDateImagePath?: string | null;
   freeTextImagePath?: string | null;
   checkboxImagePath?: string | null;
   errorCode: ErrorCode | null;

@@ -59,6 +59,7 @@ interface SessionCutouts {
   signature_stamp_image_path: string | null;
   date_image_path?: string | null;
   quote_date_image_path?: string | null;
+  invoice_date_image_path?: string | null;
   free_text_image_path?: string | null;
   checkbox_image_path?: string | null;
 }
@@ -151,7 +152,7 @@ const loadCutouts = async (
   const { data: session } = await db
     .from('signing_sessions')
     .select(
-      'signature_image_path, stamp_image_path, mention_image_path, signature_stamp_image_path, date_image_path, quote_date_image_path, free_text_image_path, checkbox_image_path',
+      'signature_image_path, stamp_image_path, mention_image_path, signature_stamp_image_path, date_image_path, quote_date_image_path, invoice_date_image_path, free_text_image_path, checkbox_image_path',
     )
     .eq('id', sessionId)
     .maybeSingle<SessionCutouts>();
@@ -164,6 +165,7 @@ const loadCutouts = async (
     ['signature_stamp', session.signature_stamp_image_path],
     ['date', session.date_image_path ?? null],
     ['quote_date', session.quote_date_image_path ?? null],
+    ['invoice_date', session.invoice_date_image_path ?? null],
     ['free_text', session.free_text_image_path ?? null],
     ['checkbox', session.checkbox_image_path ?? null],
   ];

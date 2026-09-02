@@ -40,6 +40,7 @@ interface SessionRow {
   signature_stamp_photo_path: string | null;
   date_photo_path?: string | null;
   quote_date_photo_path?: string | null;
+  invoice_date_photo_path?: string | null;
   free_text_photo_path?: string | null;
   checkbox_photo_path?: string | null;
 }
@@ -63,6 +64,7 @@ export interface RegionSelection {
   /** Extended handwritten marks — same pipeline as mention. */
   date?: Rect | null;
   quote_date?: Rect | null;
+  invoice_date?: Rect | null;
   free_text?: Rect | null;
   checkbox?: Rect | null;
   /**
@@ -125,7 +127,7 @@ export const processSigningSession = async (
   const { data: session } = await db
     .from('signing_sessions')
     .select(
-      'id, folder_id, owner_id, share_link_id, capture_mode, photo_path, photo_width, photo_height, signature_photo_path, stamp_photo_path, mention_photo_path, signature_stamp_photo_path, date_photo_path, quote_date_photo_path, free_text_photo_path, checkbox_photo_path',
+      'id, folder_id, owner_id, share_link_id, capture_mode, photo_path, photo_width, photo_height, signature_photo_path, stamp_photo_path, mention_photo_path, signature_stamp_photo_path, date_photo_path, quote_date_photo_path, invoice_date_photo_path, free_text_photo_path, checkbox_photo_path',
     )
     .eq('id', sessionId)
     .maybeSingle<SessionRow>();
@@ -159,6 +161,7 @@ export const processSigningSession = async (
     session.signature_stamp_photo_path,
     session.date_photo_path,
     session.quote_date_photo_path,
+    session.invoice_date_photo_path,
     session.free_text_photo_path,
     session.checkbox_photo_path,
   ].filter(Boolean);
@@ -316,7 +319,7 @@ export const processSigningSession = async (
     );
     return;
   }
-  for (const extra of ['date', 'quote_date', 'free_text', 'checkbox'] as const) {
+  for (const extra of ['date', 'quote_date', 'invoice_date', 'free_text', 'checkbox'] as const) {
     if (needs[extra] && !regions[extra]) {
       await failSession(
         sessionId,
@@ -350,6 +353,7 @@ export const processSigningSession = async (
       signature_stamp: session.signature_stamp_photo_path,
       date: session.date_photo_path,
       quote_date: session.quote_date_photo_path,
+      invoice_date: session.invoice_date_photo_path,
       free_text: session.free_text_photo_path,
       checkbox: session.checkbox_photo_path,
     };
@@ -370,6 +374,7 @@ export const processSigningSession = async (
     signature_stamp: 'COMBINED_EXTRACTION_FAILED',
     date: 'MARK_EXTRACTION_FAILED',
     quote_date: 'MARK_EXTRACTION_FAILED',
+    invoice_date: 'MARK_EXTRACTION_FAILED',
     free_text: 'MARK_EXTRACTION_FAILED',
     checkbox: 'MARK_EXTRACTION_FAILED',
   };
@@ -382,6 +387,7 @@ export const processSigningSession = async (
       ['signature_stamp', regions.signature_stamp],
       ['date', regions.date],
       ['quote_date', regions.quote_date],
+      ['invoice_date', regions.invoice_date],
       ['free_text', regions.free_text],
       ['checkbox', regions.checkbox],
     ];
@@ -436,6 +442,7 @@ export const processSigningSession = async (
   const combinedPng = cutouts.signature_stamp ?? null;
   const datePng = cutouts.date ?? null;
   const quoteDatePng = cutouts.quote_date ?? null;
+  const invoiceDatePng = cutouts.invoice_date ?? null;
   const freeTextPng = cutouts.free_text ?? null;
   const checkboxPng = cutouts.checkbox ?? null;
 
@@ -445,6 +452,7 @@ export const processSigningSession = async (
   const combinedPath = combinedPng ? combinedCutoutPath(ownerId, sessionId) : null;
   const datePath = datePng ? markCutoutPath(ownerId, sessionId, 'date') : null;
   const quoteDatePath = quoteDatePng ? markCutoutPath(ownerId, sessionId, 'quote_date') : null;
+  const invoiceDatePath = invoiceDatePng ? markCutoutPath(ownerId, sessionId, 'invoice_date') : null;
   const freeTextPath = freeTextPng ? markCutoutPath(ownerId, sessionId, 'free_text') : null;
   const checkboxPath = checkboxPng ? markCutoutPath(ownerId, sessionId, 'checkbox') : null;
 
@@ -454,6 +462,7 @@ export const processSigningSession = async (
   if (combinedPng && combinedPath) await uploadObject(combinedPath, combinedPng, 'image/png');
   if (datePng && datePath) await uploadObject(datePath, datePng, 'image/png');
   if (quoteDatePng && quoteDatePath) await uploadObject(quoteDatePath, quoteDatePng, 'image/png');
+  if (invoiceDatePng && invoiceDatePath) await uploadObject(invoiceDatePath, invoiceDatePng, 'image/png');
   if (freeTextPng && freeTextPath) await uploadObject(freeTextPath, freeTextPng, 'image/png');
   if (checkboxPng && checkboxPath) await uploadObject(checkboxPath, checkboxPng, 'image/png');
 
@@ -466,6 +475,7 @@ export const processSigningSession = async (
       signature_stamp_image_path: combinedPath,
       date_image_path: datePath,
       quote_date_image_path: quoteDatePath,
+      invoice_date_image_path: invoiceDatePath,
       free_text_image_path: freeTextPath,
       checkbox_image_path: checkboxPath,
     })
@@ -545,6 +555,7 @@ export const processSigningSession = async (
         signature_stamp: await varied(combinedPng, 'signature_stamp'),
         date: await varied(datePng, 'date'),
         quote_date: await varied(quoteDatePng, 'quote_date'),
+        invoice_date: await varied(invoiceDatePng, 'invoice_date'),
         free_text: await varied(freeTextPng, 'free_text'),
         checkbox: await varied(checkboxPng, 'checkbox'),
       };
@@ -556,6 +567,7 @@ export const processSigningSession = async (
         signature_stamp: combinedPng,
         date: datePng,
         quote_date: quoteDatePng,
+        invoice_date: invoiceDatePng,
         free_text: freeTextPng,
         checkbox: checkboxPng,
       };
@@ -575,6 +587,7 @@ export const processSigningSession = async (
         combinedPng: single.signature_stamp,
         datePng: single.date,
         quoteDatePng: single.quote_date,
+        invoiceDatePng: single.invoice_date,
         freeTextPng: single.free_text,
         checkboxPng: single.checkbox,
         variantsByType,
@@ -715,6 +728,7 @@ export const processSigningSession = async (
       session.signature_stamp_photo_path,
       session.date_photo_path,
       session.quote_date_photo_path,
+      session.invoice_date_photo_path,
       session.free_text_photo_path,
       session.checkbox_photo_path,
     ].filter((p): p is string => Boolean(p));
@@ -730,6 +744,7 @@ export const processSigningSession = async (
           signature_stamp_photo_path: null,
           date_photo_path: null,
           quote_date_photo_path: null,
+          invoice_date_photo_path: null,
           free_text_photo_path: null,
           checkbox_photo_path: null,
         })
@@ -745,6 +760,7 @@ export const processSigningSession = async (
         combinedPath,
         datePath,
         quoteDatePath,
+        invoiceDatePath,
         freeTextPath,
         checkboxPath,
       ].filter((p): p is string => Boolean(p)),
@@ -758,6 +774,7 @@ export const processSigningSession = async (
         signature_stamp_image_path: null,
         date_image_path: null,
         quote_date_image_path: null,
+        invoice_date_image_path: null,
         free_text_image_path: null,
         checkbox_image_path: null,
       })

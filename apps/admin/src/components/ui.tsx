@@ -202,5 +202,20 @@ export const formatDate = (value: string | null): string =>
       })
     : '—';
 
+/** "à l’instant", "il y a 20 min", "il y a 3 h", "hier", then the date. */
+export const timeAgo = (value: string | null | undefined, now = Date.now()): string => {
+  if (!value) return '—';
+  const seconds = Math.max(0, Math.round((now - new Date(value).getTime()) / 1000));
+  if (seconds < 45) return 'à l’instant';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `il y a ${hours} h`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'hier';
+  if (days < 7) return `il y a ${days} jours`;
+  return new Date(value).toLocaleDateString('fr-FR');
+};
+
 export const folderReference = (reference: number): string =>
   `#${String(reference).padStart(6, '0')}`;

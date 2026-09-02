@@ -19,6 +19,7 @@ const TONE: Record<ZoneType, { box: string; label: string }> = {
   signature_stamp: { box: 'border-purple-600 bg-purple-500/15', label: 'bg-purple-600' },
   date: { box: 'border-rose-600 bg-rose-500/15', label: 'bg-rose-600' },
   quote_date: { box: 'border-orange-600 bg-orange-500/15', label: 'bg-orange-600' },
+  invoice_date: { box: 'border-orange-600 bg-orange-500/15', label: 'bg-orange-600' },
   free_text: { box: 'border-cyan-700 bg-cyan-600/15', label: 'bg-cyan-700' },
   checkbox: { box: 'border-slate-600 bg-slate-500/15', label: 'bg-slate-600' },
 };

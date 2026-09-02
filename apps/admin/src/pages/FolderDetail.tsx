@@ -5,6 +5,7 @@ import {
   downloadFinalPdf,
   finalPdfUrl,
   useAssignTemplate,
+  useDeleteDocument,
   useFolder,
   useTemplates,
 } from '../lib/queries';
@@ -26,6 +27,7 @@ import {
   Spinner,
   folderReference,
   formatDate,
+  timeAgo,
 } from '../components/ui';
 
 const humanSize = (bytes: number) =>
@@ -35,6 +37,7 @@ export const FolderDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const { data: folder, isLoading } = useFolder(id);
   const { data: templates } = useTemplates();
+  const removeDocument = useDeleteDocument();
   /**
    * Documents ticked for comparison.
    *
@@ -232,7 +235,14 @@ export const FolderDetailPage = () => {
                   </p>
                   <ErrorNote code={doc.errorCode} message={doc.errorMessage} />
                 </div>
-                <DocumentStatusPill status={doc.status} />
+                <div className="flex shrink-0 flex-col items-end gap-0.5">
+                  <DocumentStatusPill status={doc.status} />
+                  <span className="text-[11px] text-ink-400" title={formatDate(doc.signedAt ?? doc.createdAt)}>
+                    {doc.status === 'completed' && doc.signedAt
+                      ? `signé ${timeAgo(doc.signedAt)}`
+                      : `importé ${timeAgo(doc.createdAt)}`}
+                  </span>
+                </div>
                 {doc.status === 'completed' ? (
                   <>
                     {/* Signing is not the end of the story. A signature that
@@ -257,6 +267,17 @@ export const FolderDetailPage = () => {
                     </Button>
                     <Button variant="secondary" onClick={() => void downloadFinalPdf(doc.id)}>
                       Télécharger le PDF signé
+                    </Button>
+                    <Button
+                      variant="danger"
+                      loading={removeDocument.isPending && removeDocument.variables === doc.id}
+                      onClick={() => {
+                        if (window.confirm(`Supprimer « ${doc.filename} » et son PDF signé ?`)) {
+                          removeDocument.mutate(doc.id);
+                        }
+                      }}
+                    >
+                      Supprimer
                     </Button>
                   </>
                 ) : doc.status === 'awaiting_template' ? (
@@ -303,6 +324,15 @@ export const FolderDetailPage = () => {
                       disabled={(templates?.items.length ?? 0) === 0}
                     >
                       Changer de template
+                    </Button>
+                    <Button
+                      variant="danger"
+                      loading={removeDocument.isPending && removeDocument.variables === doc.id}
+                      onClick={() => {
+                        if (window.confirm(`Supprimer « ${doc.filename} » ?`)) removeDocument.mutate(doc.id);
+                      }}
+                    >
+                      Supprimer
                     </Button>
                   </>
                 )}

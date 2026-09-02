@@ -106,6 +106,14 @@ export const useCreateFolder = () => {
   });
 };
 
+export const useDeleteDocument = () => {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(`/documents/${id}`, { method: 'DELETE' }),
+    onSuccess: () => invalidate('folder', 'folders', 'dashboard'),
+  });
+};
+
 export const useUploadDocuments = () => {
   const invalidate = useInvalidate();
   return useMutation({

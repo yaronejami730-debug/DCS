@@ -88,12 +88,12 @@ const ROW2_GAP = 34;
 const MENTION_W = (CONTENT_W - ROW2_GAP) * 0.6;
 const STAMP_W = CONTENT_W - ROW2_GAP - MENTION_W;
 
-// Row 3: name and quote date side by side.
+// Row 3: name, quote date and invoice date side by side.
 const ROW3_TOP = MENTION_TOP + MENTION_H + 78;
 const ROW3_H = 74;
 const ROW3_GAP = 34;
-const NAME_W = (CONTENT_W - ROW3_GAP) * 0.58;
-const DATE_W = CONTENT_W - ROW3_GAP - NAME_W;
+const NAME_W = (CONTENT_W - ROW3_GAP * 2) * 0.42;
+const DATE_W = (CONTENT_W - ROW3_GAP * 2 - NAME_W) / 2;
 
 export const ATTESTATION_SHEET_V1: CaptureSheetLayout = {
   id: 'attestation-v1',
@@ -172,6 +172,22 @@ export const ATTESTATION_SHEET_V1: CaptureSheetLayout = {
       type: 'quote_date',
       targets: [],
       rect: { x: MARGIN + NAME_W + ROW3_GAP, y: ROW3_TOP, width: DATE_W, height: ROW3_H },
+    },
+    {
+      id: 'invoice_date',
+      title: 'DATE DE FACTURE',
+      label: 'Date de facture',
+      shortLabel: 'Date de facture',
+      hint: 'Écrivez à la main la date de facture',
+      type: 'invoice_date',
+      // The invoice date belongs to the AH (attestation sur l'honneur) alone.
+      targets: ['ah', 'honneur'],
+      rect: {
+        x: MARGIN + NAME_W + ROW3_GAP + DATE_W + ROW3_GAP,
+        y: ROW3_TOP,
+        width: DATE_W,
+        height: ROW3_H,
+      },
     },
   ],
 };

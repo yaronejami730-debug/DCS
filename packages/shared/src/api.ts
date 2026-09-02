@@ -247,6 +247,7 @@ export const submitRegionsSchema = z
     /** Handwritten extras: each cropped and matched to zones of its own type. */
     date: normalizedRectSchema.nullable().optional(),
     quote_date: normalizedRectSchema.nullable().optional(),
+    invoice_date: normalizedRectSchema.nullable().optional(),
     free_text: normalizedRectSchema.nullable().optional(),
     checkbox: normalizedRectSchema.nullable().optional(),
     /**

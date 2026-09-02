@@ -87,7 +87,7 @@ export const LandingPage = () => {
 
   // The console's presence dot: heartbeat while this page is open.
   useEffect(() => {
-    if (!data || data.done) return;
+    if (!data) return;
     return startPresence();
   }, [data]);
   /** The document open in the in-page viewer. */
@@ -226,15 +226,9 @@ export const LandingPage = () => {
     );
   }
 
-  if (data?.done) {
-    return (
-      <Screen className="items-center justify-center gap-3 px-8 text-center">
-        <span className="text-6xl font-bold text-emerald-600">✓</span>
-        <Title>Terminé</Title>
-        <Subtitle>Ces documents sont signés. Vous pouvez fermer cette page.</Subtitle>
-      </Screen>
-    );
-  }
+  // A folder already marked complete does not close the door: the operator
+  // may want another page, or a re-signature. The link stays usable; the
+  // state is only said, below the title.
 
   const documents = data?.folder?.documents ?? [];
   const marks = data?.marks ?? ['signature'];
@@ -262,6 +256,12 @@ export const LandingPage = () => {
           ? 'Signez la feuille qui vous a été remise, puis photographiez-la depuis cette page.'
           : 'Imprimez les documents, signez-les à la main, puis renvoyez-les photographiés depuis cette page.'}
       </Subtitle>
+      {data?.done && (
+        <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-[13px] leading-5 text-emerald-800">
+          ✓ Les documents de ce dossier sont déjà signés. Vous pouvez tout de même renvoyer une
+          nouvelle page si on vous l’a demandé.
+        </p>
+      )}
 
       {/* --- 1 ---------------------------------------------------------- */}
       {!photoOnly && (

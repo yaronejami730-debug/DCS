@@ -14,6 +14,7 @@ const TINT: Record<ZoneType, string> = {
   signature_stamp: '#8b3fbf',
   date: '#c02a55',
   quote_date: '#d96b16',
+  invoice_date: '#d96b16',
   free_text: '#2a8a96',
   checkbox: '#5a6472',
 };

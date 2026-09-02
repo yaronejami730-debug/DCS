@@ -203,6 +203,7 @@ export const MARK_NATURAL_SIZE: Record<ZoneType, NaturalMarkSize> = {
   mention: { maxWidth: mm(75), maxHeight: mm(14), minHeight: mm(5) },
   date: { maxWidth: mm(35), maxHeight: mm(9), minHeight: mm(4) },
   quote_date: { maxWidth: mm(35), maxHeight: mm(9), minHeight: mm(4) },
+  invoice_date: { maxWidth: mm(35), maxHeight: mm(9), minHeight: mm(4) },
   // A name and title, one line.
   free_text: { maxWidth: mm(75), maxHeight: mm(10), minHeight: mm(4) },
   checkbox: { maxWidth: mm(6), maxHeight: mm(6), minHeight: mm(3) },

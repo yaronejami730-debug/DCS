@@ -28,6 +28,7 @@ const TONE: Record<ZoneType, { r: number; g: number; b: number; label: string }>
   signature_stamp: { r: 0.55, g: 0.24, b: 0.72, label: 'TAMPON + SIGNATURE' },
   date: { r: 0.75, g: 0.16, b: 0.35, label: 'DATE' },
   quote_date: { r: 0.85, g: 0.42, b: 0.1, label: 'DATE DE DEVIS' },
+  invoice_date: { r: 0.85, g: 0.42, b: 0.1, label: 'DATE DE FACTURE' },
   free_text: { r: 0.25, g: 0.55, b: 0.6, label: 'TEXTE' },
   checkbox: { r: 0.35, g: 0.35, b: 0.4, label: 'CASE' },
 };

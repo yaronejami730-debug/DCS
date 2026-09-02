@@ -43,6 +43,7 @@ export const ZONE_TYPE = [
   'signature_stamp',
   'date',
   'quote_date',
+  'invoice_date',
   'free_text',
   'checkbox',
 ] as const;
@@ -55,6 +56,7 @@ export const ZONE_TYPE_LABEL: Record<ZoneType, string> = {
   signature_stamp: 'Tampon + signature',
   date: 'Date',
   quote_date: 'Date de devis',
+  invoice_date: 'Date de facture',
   free_text: 'Texte',
   checkbox: 'Case cochée',
 };
@@ -68,6 +70,7 @@ export const ZONE_TYPE_INSTRUCTION: Record<ZoneType, string> = {
     'Signez puis apposez votre tampon par-dessus, comme sur un document réel.',
   date: 'Écrivez la date du jour sur une feuille blanche.',
   quote_date: 'Écrivez la date du devis sur une feuille blanche.',
+  invoice_date: 'Écrivez la date de facture sur une feuille blanche.',
   free_text: 'Écrivez le texte demandé sur une feuille blanche.',
   checkbox: 'Tracez une croix ou une coche sur une feuille blanche.',
 };
@@ -83,6 +86,7 @@ export const HANDWRITTEN_MARKS: readonly ZoneType[] = [
   'signature_stamp',
   'date',
   'quote_date',
+  'invoice_date',
   'free_text',
   'checkbox',
 ];
@@ -103,6 +107,7 @@ export const CAPTURE_ORDER: readonly ZoneType[] = [
   'mention',
   'date',
   'quote_date',
+  'invoice_date',
   'free_text',
   'checkbox',
 ];

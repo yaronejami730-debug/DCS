@@ -57,6 +57,7 @@ const TINT: Record<ZoneType, string> = {
   signature_stamp: '#8b3fbf',
   date: '#c02a55',
   quote_date: '#d96b16',
+  invoice_date: '#d96b16',
   free_text: '#2a8a96',
   checkbox: '#5a6472',
 };
@@ -630,6 +631,7 @@ export const CropReturnPage = () => {
           signature_stamp: only('signature_stamp'),
           date: only('date'),
           quote_date: only('quote_date'),
+          invoice_date: only('invoice_date'),
           free_text: only('free_text'),
           checkbox: only('checkbox'),
           documentIds: [targetDoc],
@@ -781,6 +783,7 @@ export const CropReturnPage = () => {
             signature_stamp: rect('signature_stamp'),
             date: rect('date'),
             quote_date: rect('quote_date'),
+            invoice_date: rect('invoice_date'),
             free_text: rect('free_text'),
             checkbox: rect('checkbox'),
             documentIds: [docId],

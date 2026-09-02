@@ -47,7 +47,8 @@ documentRoutes.use('*', async (c, next) => {
   await next();
 });
 
-const SELECT = '*, templates:template_id (id, name, sheet_field)';
+const SELECT =
+  '*, templates:template_id (id, name, sheet_field), signing_sessions:signing_session_id (completed_at)';
 
 /**
  * Load a document, enforcing every half of the share rule in one place.
