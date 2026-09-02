@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDocumentScanner } from '../../hooks/useDocumentScanner';
 import type { ScannedDocument } from '../../types/scanner';
 import { STATUS_TONE } from '../../utils/documentValidation';
@@ -38,6 +38,27 @@ export const DocumentScanner = ({
   const scanner = useDocumentScanner();
   const [flash, setFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The HD path: the phone's own camera app, through a capture input. Safari
+   * on iPhone gives the page no `takePhoto()`, and its video stream tops out
+   * well under the sensor; the camera app has all twelve megapixels. The
+   * photo comes back here, gets its corners detected and is straightened like
+   * a live capture — the live view has already done its job: framing.
+   */
+  const hdInput = useRef<HTMLInputElement>(null);
+  const [hdBusy, setHdBusy] = useState(false);
+  const fromCameraApp = async (file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    setHdBusy(true);
+    try {
+      const doc = await scanner.processStill(file);
+      if (doc) onScanned(doc);
+      else setError('Aucune page trouvée sur cette photo. Réessayez avec la feuille entière et à plat.');
+    } finally {
+      setHdBusy(false);
+    }
+  };
 
   // Lock page scroll behind the scanner: a full-screen viewfinder that scrolls
   // under the finger is a viewfinder the finger cannot hold still.
@@ -107,13 +128,42 @@ export const DocumentScanner = ({
 
           <div className="flex flex-col items-center gap-3 px-6 pb-[calc(env(safe-area-inset-bottom)+22px)] pt-4">
             {error && <p className="text-center text-sm text-red-300">{error}</p>}
-            <CaptureButton
-              enabled={scanner.verdict.ready && scanner.permission === 'granted'}
-              busy={scanner.capturing}
-              onCapture={() => void shoot()}
+            <div className="flex w-full items-center justify-center gap-6">
+              <span className="w-24" />
+              <CaptureButton
+                enabled={scanner.verdict.ready && scanner.permission === 'granted'}
+                busy={scanner.capturing}
+                onCapture={() => void shoot()}
+              />
+              <span className="flex w-24 justify-start">
+                {scanner.lowResolution && (
+                  <button
+                    type="button"
+                    disabled={hdBusy || scanner.capturing}
+                    onClick={() => hdInput.current?.click()}
+                    className="flex flex-col items-center gap-1 rounded-xl bg-white/10 px-3 py-2 text-[12px] font-semibold text-white backdrop-blur disabled:opacity-50"
+                  >
+                    <span className="text-lg leading-none">📸</span>
+                    {hdBusy ? 'Analyse…' : 'Photo HD'}
+                  </button>
+                )}
+              </span>
+            </div>
+            <input
+              ref={hdInput}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(e) => {
+                void fromCameraApp(e.target.files?.[0]);
+                e.target.value = '';
+              }}
             />
             <p className="text-center text-[12.5px] text-white/60">
-              La photo se prend quand le contour est vert. Tenez la feuille à plat, bien éclairée.
+              {scanner.lowResolution
+                ? 'Vert = capture rapide. Pour un texte fin, « Photo HD » ouvre l’appareil photo et redresse la page automatiquement.'
+                : 'La photo se prend quand le contour est vert. Tenez la feuille à plat, bien éclairée.'}
             </p>
           </div>
         </>

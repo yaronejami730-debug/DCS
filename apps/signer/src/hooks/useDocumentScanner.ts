@@ -63,8 +63,51 @@ const STATUS_HYSTERESIS = 2;
  * of the session and nobody is told, because nothing they can do would help.
  */
 type DetectorKind = 'ml' | 'classical';
-/** Long edge of the captured frame. Matches the rest of the app's uploads. */
-const CAPTURE_MAX_EDGE = 2400;
+/**
+ * Long edge of the captured frame.
+ *
+ * Sharpness is decided here, not in the warp: a page filling half of a 1080p
+ * frame is ~700px of text, and no perspective correction adds pixels. So the
+ * camera is asked for its full sensor and the capture keeps every pixel up to
+ * this cap; the straightened page that is uploaded is far smaller anyway.
+ */
+const CAPTURE_MAX_EDGE = 4096;
+
+/**
+ * `ImageCapture.takePhoto()` — a real still, at the sensor's photo resolution,
+ * where the browser has it (Chrome, Android). Typed here because the DOM lib
+ * does not carry it everywhere yet; absent, the video frame is used.
+ */
+interface StillCamera {
+  takePhoto(): Promise<Blob>;
+}
+type StillCameraCtor = new (track: MediaStreamTrack) => StillCamera;
+const stillCameraCtor = (): StillCameraCtor | null => {
+  const w = window as unknown as { ImageCapture?: StillCameraCtor };
+  return typeof w.ImageCapture === 'function' ? w.ImageCapture : null;
+};
+
+/** Ask the track for the most pixels and continuous focus it admits to. Best effort. */
+const sharpenTrack = async (track: MediaStreamTrack): Promise<void> => {
+  try {
+    const caps = (track.getCapabilities?.() ?? {}) as {
+      width?: { max?: number };
+      height?: { max?: number };
+      focusMode?: string[];
+    };
+    const constraints: MediaTrackConstraints = {};
+    if (caps.width?.max && caps.height?.max) {
+      constraints.width = { ideal: caps.width.max };
+      constraints.height = { ideal: caps.height.max };
+    }
+    if (caps.focusMode?.includes('continuous')) {
+      (constraints as MediaTrackConstraints & { focusMode?: string }).focusMode = 'continuous';
+    }
+    if (Object.keys(constraints).length > 0) await track.applyConstraints(constraints);
+  } catch {
+    /* the browser keeps what it gave us */
+  }
+};
 /** Pause between two detections, on top of the detection itself. */
 const TICK_MS = 80;
 /** Corners must move at least this much (normalized) for a re-render. */
@@ -95,7 +138,18 @@ export interface DocumentScannerControls {
   capture: () => Promise<ScannedDocument | null>;
   /** (Re)ask for the camera — after a refusal, or with `manualStart`. */
   start: () => void;
+  /**
+   * Straighten a photo taken outside the live view — the phone's own camera
+   * app, at its full resolution. Corners are detected on the photo itself.
+   * Null when no page could be found in it.
+   */
+  processStill: (photo: Blob) => Promise<ScannedDocument | null>;
+  /** True when the live stream is too small for crisp text and the HD path is worth offering. */
+  lowResolution: boolean;
 }
+
+/** Below this long edge, a video frame will not carry legible small print. */
+const LOW_RES_EDGE = 2500;
 
 const IDLE_VERDICT: ScannerVerdict = { status: 'searching', ready: false, corners: null };
 
@@ -338,11 +392,18 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            // The sensor, not a video preset: text is read off these pixels.
+            width: { ideal: 4096 },
+            height: { ideal: 3072 },
           },
           audio: false,
         });
+        const [track] = stream.getVideoTracks();
+        if (track) {
+          await sharpenTrack(track);
+          const s = track.getSettings();
+          console.info('[scanner] flux caméra %d×%d', s.width ?? 0, s.height ?? 0);
+        }
         if (cancelled) {
           for (const t of stream.getTracks()) t.stop();
           return;
@@ -413,17 +474,47 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
     publish({ ...current, status: 'capturing', ready: false });
     stopLoop();
     try {
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      const scale = Math.min(1, CAPTURE_MAX_EDGE / Math.max(vw, vh));
-      const full = document.createElement('canvas');
-      full.width = Math.round(vw * scale);
-      full.height = Math.round(vh * scale);
-      const context = full.getContext('2d');
-      if (!context) return null;
-      context.drawImage(video, 0, 0, full.width, full.height);
+      /**
+       * The still. A real photo when the browser can take one — sensor
+       * resolution, its own exposure and focus — else the current video frame.
+       * A photo does not share the preview's framing exactly, so its corners
+       * are detected again on the photo itself; if that fails, the preview
+       * frame (whose corners we trust) is used instead of guessing.
+       */
+      const draw = (source: CanvasImageSource, sw: number, sh: number) => {
+        const scale = Math.min(1, CAPTURE_MAX_EDGE / Math.max(sw, sh));
+        const c = document.createElement('canvas');
+        c.width = Math.round(sw * scale);
+        c.height = Math.round(sh * scale);
+        c.getContext('2d')?.drawImage(source, 0, 0, c.width, c.height);
+        return c;
+      };
 
-      const pixelCorners = scaleCorners(current.corners, full.width, full.height);
+      let full = draw(video, video.videoWidth, video.videoHeight);
+      let pixelCorners = scaleCorners(current.corners, full.width, full.height);
+
+      const Still = stillCameraCtor();
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (Still && track) {
+        try {
+          const photo = await new Still(track).takePhoto();
+          const bitmap = await createImageBitmap(photo);
+          const stillCanvas = draw(bitmap, bitmap.width, bitmap.height);
+          bitmap.close();
+          const found = await scanDocument(stillCanvas, {
+            mode: 'detect',
+            maxProcessingDimension: 1200,
+            detector: detector.current,
+          });
+          if (found.success && found.corners) {
+            full = stillCanvas;
+            pixelCorners = found.corners;
+          }
+        } catch {
+          /* no still: the video frame stands */
+        }
+      }
+
       let page: HTMLCanvasElement | null = null;
       try {
         const warped = await extractDocument(full, pixelCorners, { output: 'canvas' });
@@ -464,5 +555,49 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
     }
   }, [capturing, publish, startLoop, stopLoop]);
 
-  return { videoRef, permission, frame, verdict, capturing, capture, start };
+  const processStill = useCallback(async (photo: Blob): Promise<ScannedDocument | null> => {
+    setCapturing(true);
+    try {
+      const bitmap = await createImageBitmap(photo).catch(() => null);
+      if (!bitmap) return null;
+      const scale = Math.min(1, CAPTURE_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+      const full = document.createElement('canvas');
+      full.width = Math.round(bitmap.width * scale);
+      full.height = Math.round(bitmap.height * scale);
+      full.getContext('2d')?.drawImage(bitmap, 0, 0, full.width, full.height);
+      bitmap.close();
+
+      const found = await scanDocument(full, {
+        mode: 'detect',
+        maxProcessingDimension: 1200,
+        detector: detector.current,
+      }).catch(() => null);
+      let page: HTMLCanvasElement | null = null;
+      if (found?.success && found.corners) {
+        const warped = await extractDocument(full, found.corners, { output: 'canvas' }).catch(() => null);
+        if (warped?.success && warped.output instanceof HTMLCanvasElement) page = warped.output;
+      }
+      if (!page) return null;
+      const [blob, originalBlob] = await Promise.all([toJpeg(page), toJpeg(full)]);
+      return {
+        uri: URL.createObjectURL(blob),
+        blob,
+        width: page.width,
+        height: page.height,
+        corners: found?.corners ? scaleCorners(found.corners, 1 / full.width, 1 / full.height) : undefined,
+        original: {
+          uri: URL.createObjectURL(originalBlob),
+          blob: originalBlob,
+          width: full.width,
+          height: full.height,
+        },
+      };
+    } finally {
+      setCapturing(false);
+    }
+  }, []);
+
+  const lowResolution = frame ? Math.max(frame.width, frame.height) < LOW_RES_EDGE : false;
+
+  return { videoRef, permission, frame, verdict, capturing, capture, start, processStill, lowResolution };
 };

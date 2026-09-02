@@ -81,7 +81,9 @@ export interface ValidationOptions {
 
 export const DEFAULT_VALIDATION: ValidationOptions = {
   edgeMargin: 0.012,
-  minCoverage: 0.2,
+  // A third of the frame, not a fifth: the page's sharpness is its share of the
+  // sensor's pixels, and a phone's video stream has few to spare.
+  minCoverage: 0.32,
   maxCoverage: 0.93,
   minCornerAngle: 62,
   maxCornerAngle: 118,

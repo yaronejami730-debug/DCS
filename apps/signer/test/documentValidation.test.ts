@@ -49,8 +49,9 @@ describe('validateDocumentDetection', () => {
   });
 
   it('a steep perspective is tilted', () => {
-    const c = page(0.45);
-    // Squash the top edge: the page is seen from far below.
+    const c = page(0.6);
+    // Squash the top edge: the page is seen from far below. Still large enough
+    // that size is not what fails it.
     c.topLeft.x += 0.22;
     c.topRight.x -= 0.22;
     expect(validateDocumentDetection(c).status).toBe('tilted');
