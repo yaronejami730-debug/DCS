@@ -3,6 +3,7 @@ import { useAuth } from './lib/auth';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/Login';
 import { DashboardPage } from './pages/Dashboard';
+import { ClientsPage } from './pages/Clients';
 import { FoldersPage } from './pages/Folders';
 import { FolderDetailPage } from './pages/FolderDetail';
 import { TemplatesPage } from './pages/Templates';
@@ -31,6 +32,7 @@ export const App = () => {
       <Route element={<Layout />}>
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/folders" element={<FoldersPage />} />
+        <Route path="/clients" element={<ClientsPage />} />
         <Route path="/folders/:id" element={<FolderDetailPage />} />
         <Route path="/folders/:id/comparer" element={<FolderComparisonPage />} />
         {/* Crop the marks out of a page a technician sent back. */}

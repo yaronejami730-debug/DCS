@@ -7,6 +7,7 @@ import { Button } from './ui';
 const NAV = [
   { to: '/dashboard', label: 'Tableau de bord' },
   { to: '/folders', label: 'Dossiers' },
+  { to: '/clients', label: 'Clients' },
   { to: '/templates', label: 'Templates' },
   { to: '/attestation', label: 'Attestation simplifiée' },
   { to: '/guide', label: 'Guide' },

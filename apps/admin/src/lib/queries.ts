@@ -123,6 +123,34 @@ export interface ClientSearchResult {
   crm: { name: string; configured: boolean; leads: number; error: string | null };
 }
 
+/** One row of the client base. */
+export interface ClientRow {
+  id: string;
+  externalId: string;
+  name: string;
+  company: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  city: string | null;
+  postalCode: string | null;
+  category: string | null;
+  state: string | null;
+  reference: string | null;
+  updatedAt: string;
+  folderId: string | null;
+}
+
+export const useClients = (q: string, offset: number, limit: number) =>
+  useQuery({
+    queryKey: ['clients', q, offset, limit],
+    queryFn: () =>
+      api<{ total: number; items: ClientRow[] }>(
+        `/clients?q=${encodeURIComponent(q)}&offset=${offset}&limit=${limit}`,
+      ),
+    placeholderData: (prev) => prev,
+  });
+
 /** One-time backfill of the CRM mirror from a CSV export. */
 export const useImportClients = () => {
   const invalidate = useInvalidate();
@@ -135,7 +163,7 @@ export const useImportClients = () => {
         { method: 'POST', form },
       );
     },
-    onSuccess: () => invalidate('folders'),
+    onSuccess: () => invalidate('folders', 'clients'),
   });
 };
 
@@ -153,7 +181,7 @@ export const useCreateFolder = () => {
   return useMutation({
     mutationFn: (input: { name: string; crmLeadId?: string | null }) =>
       api<Folder>('/folders', { method: 'POST', json: input }),
-    onSuccess: () => invalidate('folders', 'dashboard'),
+    onSuccess: () => invalidate('folders', 'dashboard', 'clients'),
   });
 };
 

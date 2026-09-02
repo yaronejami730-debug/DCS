@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { env } from '../env.js';
 import { db } from '../lib/supabase.js';
 import { requireAuth, type AppBindings } from '../lib/auth.js';
-import { leadFromWebhook, searchLeads, upsertLead, webhookTokenFor } from '../services/crm/leads.js';
+import { leadFromWebhook, searchLeads, upsertLead, webhookTokenFor, type CrmLeadRow } from '../services/crm/leads.js';
 import { parseCsv } from '../services/crm/csv.js';
 import { badRequest } from '../lib/errors.js';
 import { audit } from '../lib/audit.js';
@@ -113,6 +113,70 @@ clientRoutes.post('/import', async (c) => {
     metadata: { provider: 'qhare', rows: rows.length, imported, skipped: skipped.length, columns },
   });
   return c.json({ rows: rows.length, imported, skipped: skipped.slice(0, 20), columns });
+});
+
+/**
+ * The client base as a table: paginated, searchable with the same rule as the
+ * search box, each row saying whether a folder already exists for it.
+ */
+clientRoutes.get('/', async (c) => {
+  const user = c.get('user');
+  const q = (c.req.query('q') ?? '').trim();
+  const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') ?? 50) || 50));
+  const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0);
+
+  let query = db
+    .from('crm_leads')
+    .select(
+      'id, external_id, name, first_name, last_name, company, phone, email, city, postal_code, category, state, reference, address, updated_at',
+      { count: 'exact' },
+    )
+    .eq('owner_id', user.id);
+  for (const w of q.split(/\s+/).filter(Boolean).slice(0, 4)) {
+    const like = `%${w.replace(/[%_,()]/g, '')}%`;
+    query = query.or(
+      ['name', 'first_name', 'last_name', 'company', 'phone', 'email', 'city', 'postal_code', 'address', 'reference', 'external_id']
+        .map((col) => `${col}.ilike.${like}`)
+        .join(','),
+    );
+  }
+  const { data, count } = await query
+    .order('name', { ascending: true })
+    .range(offset, offset + limit - 1)
+    .returns<CrmLeadRow[]>();
+  const rows = data ?? [];
+
+  // Which of these clients already have a folder.
+  const ids = rows.map((r) => r.external_id);
+  const { data: folders } = ids.length
+    ? await db
+        .from('folders')
+        .select('id, crm_lead_id')
+        .eq('owner_id', user.id)
+        .in('crm_lead_id', ids)
+        .returns<Array<{ id: string; crm_lead_id: string }>>()
+    : { data: [] };
+  const folderFor = new Map((folders ?? []).map((f) => [f.crm_lead_id, f.id]));
+
+  return c.json({
+    total: count ?? rows.length,
+    items: rows.map((r) => ({
+      id: r.id,
+      externalId: r.external_id,
+      name: r.name,
+      company: r.company,
+      phone: r.phone,
+      email: r.email,
+      address: r.address,
+      city: r.city,
+      postalCode: r.postal_code,
+      category: r.category,
+      state: r.state,
+      reference: r.reference,
+      updatedAt: r.updated_at,
+      folderId: folderFor.get(r.external_id) ?? null,
+    })),
+  });
 });
 
 /** The URL to paste into Qhare's webhook form, minted for this account. */
