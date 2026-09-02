@@ -46,11 +46,23 @@ const DETECT_WIDTH = 540;
  * "no document" made the contour blink and reset the stability clock. Up to
  * this many consecutive misses, the last corners stand in.
  */
-const MAX_MISSES = 3;
+const MAX_MISSES = 4;
 /** Weight of the newest corners in the moving average shown and judged. */
-const SMOOTHING = 0.45;
+const SMOOTHING = 0.4;
 /** A jump larger than this (normalized) is a new position, not noise: snap. */
 const SNAP_DISTANCE = 0.12;
+/** Raw detections kept for the per-coordinate median that kills one-frame jumps. */
+const MEDIAN_WINDOW = 5;
+/** A worse status must hold for this many ticks before it is shown. `ready` drops at once. */
+const STATUS_HYSTERESIS = 2;
+/**
+ * Detector: the neural one first. It is markedly steadier on cluttered desks
+ * and pale paper than the Canny pipeline, at the price of a ~2 MB download on
+ * first use (lazy, from a CDN) and a slower frame. If it cannot load — offline,
+ * blocked CDN, an old browser — the classical detector takes over for the rest
+ * of the session and nobody is told, because nothing they can do would help.
+ */
+type DetectorKind = 'ml' | 'classical';
 /** Long edge of the captured frame. Matches the rest of the app's uploads. */
 const CAPTURE_MAX_EDGE = 2400;
 /** Pause between two detections, on top of the detection itself. */
@@ -120,6 +132,10 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
   /** Smoothed corners of the last frames, and how many frames in a row had none. */
   const smoothed = useRef<Corners | null>(null);
   const misses = useRef(0);
+  const recent = useRef<Corners[]>([]);
+  const detector = useRef<DetectorKind>('ml');
+  /** Status waiting to be shown, and for how many ticks it has been asking. */
+  const pendingStatus = useRef<{ status: ScannerStatus; ticks: number } | null>(null);
   /** The verdict the UI last saw — and the one the shutter trusts. */
   const latest = useRef<ScannerVerdict>(IDLE_VERDICT);
 
@@ -171,9 +187,52 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
       context.drawImage(video, 0, 0, w, h);
 
       const scanner = (scannerRef.current ??= new Scanner());
-      const result = await scanner.scan(canvas, { mode: 'detect', maxProcessingDimension: DETECT_WIDTH });
-      const raw: Corners | null =
+      let result: Awaited<ReturnType<Scanner['scan']>>;
+      try {
+        result = await scanner.scan(canvas, {
+          mode: 'detect',
+          maxProcessingDimension: DETECT_WIDTH,
+          detector: detector.current,
+          ...(detector.current === 'ml' ? { ml: { minScore: 0.45, modelFetchTimeoutMs: 15_000 } } : {}),
+        });
+      } catch (error) {
+        if (detector.current === 'ml') {
+          console.warn('[scanner] ML detector unavailable, using classical: %s', error);
+          detector.current = 'classical';
+          result = await scanner.scan(canvas, { mode: 'detect', maxProcessingDimension: DETECT_WIDTH });
+        } else {
+          throw error;
+        }
+      }
+      const detected: Corners | null =
         result.success && result.corners ? scaleCorners(result.corners, 1 / w, 1 / h) : null;
+
+      // Median over the last few detections: one wild frame cannot drag the
+      // contour, where an average would let it.
+      let raw: Corners | null = null;
+      if (detected) {
+        const window = recent.current;
+        window.push(detected);
+        if (window.length > MEDIAN_WINDOW) window.shift();
+        const median = (values: number[]) => {
+          const sorted = [...values].sort((a, b) => a - b);
+          return sorted[Math.floor(sorted.length / 2)]!;
+        };
+        const key = (k: keyof Corners, axis: 'x' | 'y') => median(window.map((c) => c[k][axis]));
+        raw = {
+          topLeft: { x: key('topLeft', 'x'), y: key('topLeft', 'y') },
+          topRight: { x: key('topRight', 'x'), y: key('topRight', 'y') },
+          bottomRight: { x: key('bottomRight', 'x'), y: key('bottomRight', 'y') },
+          bottomLeft: { x: key('bottomLeft', 'x'), y: key('bottomLeft', 'y') },
+        };
+        // A page that jumped is a new page: forget the old readings.
+        if (maxCornerDisplacement(raw, detected) > SNAP_DISTANCE) {
+          recent.current = [detected];
+          raw = detected;
+        }
+      } else if (misses.current >= MAX_MISSES) {
+        recent.current = [];
+      }
 
       // Smooth, and bridge short dropouts, before judging anything.
       let corners: Corners | null;
@@ -230,7 +289,24 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
       else if (stability !== 'stable') status = 'unstable';
       else status = 'ready';
 
-      publish({ status, ready: status === 'ready', corners });
+      // Hysteresis on the label only. Going green, or losing green, is
+      // immediate — the shutter must never lag the truth. A worse message
+      // (tilted, too small…) waits two ticks so a single odd frame does not
+      // flip the text back and forth.
+      const shown = latest.current.status;
+      let display = status;
+      if (status !== 'ready' && shown !== 'ready' && status !== shown) {
+        const pending = pendingStatus.current;
+        if (pending && pending.status === status) pending.ticks += 1;
+        else pendingStatus.current = { status, ticks: 1 };
+        if ((pendingStatus.current?.ticks ?? 0) < STATUS_HYSTERESIS) display = shown;
+        else pendingStatus.current = null;
+      } else {
+        pendingStatus.current = null;
+      }
+      if (shown === 'ready' && status !== 'ready') display = status;
+
+      publish({ status: display, ready: status === 'ready', corners });
     } catch {
       // A frame we could not read; the next one will do.
     } finally {
@@ -245,6 +321,8 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
     trackerRef.current.reset();
     smoothed.current = null;
     misses.current = 0;
+    recent.current = [];
+    pendingStatus.current = null;
     void step();
   }, [step]);
 
@@ -287,6 +365,20 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
         }
         setPermission('granted');
         startLoop();
+        // Warm the neural detector on a blank tile so the model downloads now,
+        // not on the first real frame the signer is waiting on.
+        void (async () => {
+          try {
+            const tile = document.createElement('canvas');
+            tile.width = 64;
+            tile.height = 64;
+            tile.getContext('2d')?.fillRect(0, 0, 64, 64);
+            const scanner = (scannerRef.current ??= new Scanner());
+            await scanner.scan(tile, { mode: 'detect', detector: 'ml', ml: { modelFetchTimeoutMs: 15_000 } });
+          } catch {
+            detector.current = 'classical';
+          }
+        })();
       } catch (error) {
         const name = error instanceof DOMException ? error.name : '';
         // NotAllowedError is a refusal — this time, or a remembered one. There is
