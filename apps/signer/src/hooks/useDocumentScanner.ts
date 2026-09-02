@@ -473,6 +473,9 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
     setCapturing(true);
     publish({ ...current, status: 'capturing', ready: false });
     stopLoop();
+    // Freeze the viewfinder on the frame being taken: the tap answers at once,
+    // whatever the warp and the encoding take after it.
+    video.pause();
     try {
       /**
        * The still. A real photo when the browser can take one — sensor
@@ -533,25 +536,25 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
         }
       }
       const output = page ?? full;
-      const [blob, originalBlob] = await Promise.all([toJpeg(output), toJpeg(full)]);
+      const blob = await toJpeg(output);
       return {
         uri: URL.createObjectURL(blob),
         blob,
         width: output.width,
         height: output.height,
         corners: current.corners,
-        original: {
-          uri: URL.createObjectURL(originalBlob),
-          blob: originalBlob,
-          width: full.width,
-          height: full.height,
-        },
+        original: { width: full.width, height: full.height },
       };
     } finally {
       setCapturing(false);
       latest.current = IDLE_VERDICT;
       setVerdict(IDLE_VERDICT);
-      if (streamRef.current) startLoop();
+      if (streamRef.current) {
+        void video.play().catch(() => {
+          /* still paused: the next start() call resumes it */
+        });
+        startLoop();
+      }
     }
   }, [capturing, publish, startLoop, stopLoop]);
 
@@ -578,19 +581,14 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
         if (warped?.success && warped.output instanceof HTMLCanvasElement) page = warped.output;
       }
       if (!page) return null;
-      const [blob, originalBlob] = await Promise.all([toJpeg(page), toJpeg(full)]);
+      const blob = await toJpeg(page);
       return {
         uri: URL.createObjectURL(blob),
         blob,
         width: page.width,
         height: page.height,
         corners: found?.corners ? scaleCorners(found.corners, 1 / full.width, 1 / full.height) : undefined,
-        original: {
-          uri: URL.createObjectURL(originalBlob),
-          blob: originalBlob,
-          width: full.width,
-          height: full.height,
-        },
+        original: { width: full.width, height: full.height },
       };
     } finally {
       setCapturing(false);

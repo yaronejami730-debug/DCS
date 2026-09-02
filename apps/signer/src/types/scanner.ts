@@ -58,8 +58,12 @@ export interface ScannedDocument {
   height: number;
   /** Where the page was in the original frame, normalized 0..1. */
   corners?: Corners;
-  /** The untouched full-resolution frame, for whoever wants to re-crop. */
-  original: { uri: string; blob: Blob; width: number; height: number };
+  /**
+   * Size of the frame the page was cut from. The frame itself is not kept:
+   * encoding a 12-megapixel JPEG on the phone cost a full second between the
+   * tap and the result, for a file nothing downstream reads.
+   */
+  original: { width: number; height: number };
 }
 
 /** Tunables of the framing validation, all in normalized frame units. */

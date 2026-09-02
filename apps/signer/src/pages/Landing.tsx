@@ -79,7 +79,6 @@ export const LandingPage = () => {
     const file = new File([doc.blob], `page-${pending.length + 1}.jpg`, { type: 'image/jpeg' });
     const quality = await assessPhoto(file).catch(() => null);
     setPending((prev) => [...prev, { file, url: doc.uri, quality, scanned: true }]);
-    URL.revokeObjectURL(doc.original.uri);
   };
   const openCamera = () => {
     if (cameraSupported()) setScannerOpen(true);
