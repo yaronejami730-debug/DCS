@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeImagePlacement,
+  MARK_NATURAL_SIZE,
   containFit,
   fitMarkInZone,
   applyMarkVariation,
@@ -397,5 +398,43 @@ describe('applyMarkVariation', () => {
     const onRotatedPage = { ...base, rotateDegrees: 90 };
     const tilted = applyMarkVariation(onRotatedPage, { ...NO_VARIATION, tiltDegrees: -2 });
     expect(tilted.rotateDegrees).toBe(88);
+  });
+});
+
+describe('fitMarkInZone with a natural size', () => {
+  const natural = MARK_NATURAL_SIZE.signature;
+
+  it('caps a signature drawn into a generous box at a hand-sized width', () => {
+    // A box the width of an A4 footer, 300pt tall: without bounds the mark
+    // would span it.
+    const box = { x: 40, y: 500, width: 500, height: 300 };
+    const fitted = fitMarkInZone(1400, 500, box, { natural });
+    expect(fitted.width).toBeLessThanOrEqual(natural.maxWidth + 1e-6);
+    expect(fitted.height).toBeLessThanOrEqual(natural.maxHeight + 1e-6);
+    // …and stays centred where the zone put it.
+    expect(fitted.x + fitted.width / 2).toBeCloseTo(box.x + box.width / 2, 6);
+    expect(fitted.y + fitted.height / 2).toBeCloseTo(box.y + box.height / 2, 6);
+  });
+
+  it('raises a signature squeezed onto a thin dotted line to a legible height', () => {
+    const line = { x: 300, y: 700, width: 120, height: 4 };
+    const fitted = fitMarkInZone(1400, 500, line, { natural });
+    expect(fitted.height).toBeGreaterThanOrEqual(natural.minHeight - 1e-6);
+    expect(fitted.width / fitted.height).toBeCloseTo(1400 / 500, 6);
+  });
+
+  it('leaves a normally sized box alone', () => {
+    const box = { x: 300, y: 700, width: 140, height: 50 };
+    const bounded = fitMarkInZone(1400, 500, box, { natural });
+    const free = fitMarkInZone(1400, 500, box);
+    expect(bounded).toEqual(free);
+  });
+
+  it('keeps every type inside its own maximum, whatever the box', () => {
+    for (const [type, size] of Object.entries(MARK_NATURAL_SIZE)) {
+      const fitted = fitMarkInZone(1000, 1000, { x: 0, y: 0, width: 595, height: 842 }, { natural: size });
+      expect(fitted.width, type).toBeLessThanOrEqual(size.maxWidth + 1e-6);
+      expect(fitted.height, type).toBeLessThanOrEqual(size.maxHeight + 1e-6);
+    }
   });
 });

@@ -2,6 +2,7 @@ import { PDFDocument, degrees } from 'pdf-lib';
 import type { ErrorCode, NormalizedRect, ZoneType } from '@scansign/shared';
 import { PdfPipelineError } from './errors.js';
 import {
+  MARK_NATURAL_SIZE,
   applyMarkVariation,
   computeImagePlacement,
   normalizeRotation,
@@ -35,6 +36,16 @@ export interface GenerateSignedPdfInput {
   quoteDatePng?: Uint8Array | null;
   freeTextPng?: Uint8Array | null;
   checkboxPng?: Uint8Array | null;
+  /**
+   * A different image for each zone of a type, by that zone's ordinal within
+   * the document (0 = first signature zone, 1 = second…).
+   *
+   * A contract that asks for the signature twice must not carry the same
+   * bitmap twice: a hand never signs identically. The caller derives one
+   * variant per zone and lists them here; a zone with no entry falls back to
+   * the type's single image above.
+   */
+  variantsByType?: Partial<Record<ZoneType, Array<Uint8Array | null | undefined>>>;
   /**
    * How marks are scaled into their zones. Defaults to DEFAULT_MARK_FIT, which
    * lets the zone's width lead — see fitMarkInZone.
@@ -135,9 +146,24 @@ export const generateSignedPdf = async (
     checkbox: input.checkboxPng?.length ? await doc.embedPng(input.checkboxPng) : null,
   };
 
+  // Per-zone variants are embedded once each, on first use.
+  const embeddedVariants = new Map<Uint8Array, Awaited<ReturnType<typeof doc.embedPng>>>();
+  const ordinalByType: Partial<Record<ZoneType, number>> = {};
+
   let placed = 0;
   for (const zone of zones) {
-    const image = embedded[zone.type];
+    const ordinal = ordinalByType[zone.type] ?? 0;
+    ordinalByType[zone.type] = ordinal + 1;
+    const variantPng = input.variantsByType?.[zone.type]?.[ordinal];
+    let image = embedded[zone.type];
+    if (variantPng && variantPng.length > 0) {
+      let cached = embeddedVariants.get(variantPng);
+      if (!cached) {
+        cached = await doc.embedPng(variantPng);
+        embeddedVariants.set(variantPng, cached);
+      }
+      image = cached;
+    }
     if (!image) continue;
 
     const page = pages[zone.page - 1]!;
@@ -149,7 +175,13 @@ export const generateSignedPdf = async (
       rotation: normalizeRotation(page.getRotation().angle),
       imageWidth: image.width,
       imageHeight: image.height,
-      fit: input.fit,
+      // The mark type's real-world size bounds the fit, unless the caller
+      // decided otherwise (null switches them off, e.g. in a geometry test).
+      fit: {
+        ...input.fit,
+        natural:
+          input.fit?.natural === undefined ? MARK_NATURAL_SIZE[zone.type] : input.fit.natural,
+      },
     });
 
     const varied = applyMarkVariation(placement, input.variation ?? NO_VARIATION);

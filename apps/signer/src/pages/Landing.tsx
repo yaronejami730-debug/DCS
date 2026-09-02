@@ -5,6 +5,8 @@ import { documentUrl, useSendSignedScan, useShareIntro } from '../lib/queries';
 import { requestLocation } from '../lib/geolocation';
 import { reportStep, startPresence } from '../lib/activity';
 import { scanToDocument } from '../lib/scanner';
+import { assessPhoto, type PhotoQuality } from '../lib/quality';
+import { QualityChips } from '../components/QualityChips';
 
 /**
  * pdf.js only loads when a document is actually opened — it outweighs the rest
@@ -52,7 +54,17 @@ export const LandingPage = () => {
   const [opening, setOpening] = useState<string | null>(null);
   /** True while photos are being auto-cropped before upload. */
   const [scanning, setScanning] = useState(false);
-  const cameraInput = useRef<HTMLInputElement>(null);
+  /**
+   * Pages chosen but not yet sent, each with its sensors read.
+   *
+   * The technician sees, per photo, whether it is sharp, lit, framed, and
+   * whether the signature sheet was recognised — and decides to send or retake
+   * before anything leaves the phone. PDFs carry no sensors: they are already
+   * documents.
+   */
+  const [pending, setPending] = useState<
+    Array<{ file: File; url: string | null; quality: PhotoQuality | null; scanned: boolean }>
+  >([]);
 
   // The console's presence dot: heartbeat while this page is open.
   useEffect(() => {
@@ -88,33 +100,57 @@ export const LandingPage = () => {
     }
   };
 
-  const upload = async (files: FileList | null) => {
+  /**
+   * Prepare chosen files: straighten each photo and read its sensors, then hold
+   * them for review. Nothing is uploaded here.
+   *
+   * Auto-scan first: find the page, straighten it, crop the desk out — the way
+   * a scanner app does, on the device. A PDF is left as-is (already a document),
+   * and a photo where no page is found falls back to the original rather than a
+   * bad crop. The sensors then run on what will actually be sent.
+   */
+  const prepare = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploadError(null);
-
-    /**
-     * Auto-scan each image before it goes up: find the page, straighten it,
-     * crop the desk out — the way a scanner app does, on the device. A PDF is
-     * left as-is (already a document), and a photo where no page is found falls
-     * back to the original rather than a bad crop.
-     */
     setScanning(true);
-    let toSend: File[];
     try {
-      toSend = await Promise.all(
+      const prepared = await Promise.all(
         Array.from(files).map(async (file) => {
-          if (file.type === 'application/pdf') return file;
-          const { blob } = await scanToDocument(file);
-          return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', {
+          if (file.type === 'application/pdf') {
+            return { file, url: null, quality: null, scanned: false };
+          }
+          let blob: Blob = file;
+          let scanned = false;
+          try {
+            const outcome = await scanToDocument(file);
+            blob = outcome.blob;
+            scanned = outcome.scanned;
+          } catch {
+            /* keep the original */
+          }
+          const named = new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', {
             type: 'image/jpeg',
           });
+          const quality = await assessPhoto(named).catch(() => null);
+          return { file: named, url: URL.createObjectURL(named), quality, scanned };
         }),
       );
-    } catch {
-      toSend = Array.from(files);
+      setPending((prev) => [...prev, ...prepared]);
     } finally {
       setScanning(false);
+      if (fileInput.current) fileInput.current.value = '';
     }
+  };
+
+  const discardPending = () => {
+    for (const p of pending) if (p.url) URL.revokeObjectURL(p.url);
+    setPending([]);
+  };
+
+  const upload = async () => {
+    if (pending.length === 0) return;
+    setUploadError(null);
+    const toSend = pending.map((p) => p.file);
 
     /**
      * Ask for the location first, when the link requires it.
@@ -143,13 +179,12 @@ export const LandingPage = () => {
         onSuccess: (result) => {
           setSent((prev) => [...prev, ...result.returned.map((r) => r.filename)]);
           reportStep('sent');
+          discardPending();
         },
         onError: (e) =>
           setUploadError(e instanceof ApiRequestError ? e.message : 'Envoi impossible.'),
       },
     );
-    // Let the same file be chosen twice in a row.
-    if (fileInput.current) fileInput.current.value = '';
   };
 
   if (isLoading) return <Loading label="Ouverture…" />;
@@ -185,16 +220,32 @@ export const LandingPage = () => {
   const documents = data?.folder?.documents ?? [];
   const marks = data?.marks ?? ['signature'];
   const asker = data?.sender?.trim();
+  /**
+   * An empty link: nothing to print, the technician already holds the paper.
+   * The page is then the camera step alone, numbered from 1.
+   */
+  const photoOnly = documents.length === 0;
+  const stepNo = (n: number) => (photoOnly ? n - 1 : n);
 
   return (
     <Screen className="px-5 py-6">
-      <Title>{asker ? `${asker} vous demande une signature` : 'Documents à signer'}</Title>
+      <Title>
+        {asker
+          ? photoOnly
+            ? `${asker} attend votre feuille signée`
+            : `${asker} vous demande une signature`
+          : photoOnly
+            ? 'Renvoyer une feuille signée'
+            : 'Documents à signer'}
+      </Title>
       <Subtitle>
-        Imprimez les documents, signez-les à la main, puis renvoyez-les photographiés depuis cette
-        page.
+        {photoOnly
+          ? 'Signez la feuille qui vous a été remise, puis photographiez-la depuis cette page.'
+          : 'Imprimez les documents, signez-les à la main, puis renvoyez-les photographiés depuis cette page.'}
       </Subtitle>
 
       {/* --- 1 ---------------------------------------------------------- */}
+      {!photoOnly && (
       <section className="mt-7">
         <h2 className="text-xs font-bold uppercase tracking-wide text-ink-400">
           1 · Vos documents
@@ -226,14 +277,17 @@ export const LandingPage = () => {
           )}
         </div>
       </section>
+      )}
 
       {/* --- 2 ---------------------------------------------------------- */}
       <section className="mt-7">
         <h2 className="text-xs font-bold uppercase tracking-wide text-ink-400">
-          2 · Signez à la main
+          {stepNo(2)} · Signez à la main
         </h2>
         <div className="mt-2.5 rounded-xl bg-white p-4 ring-1 ring-ink-200">
-          <p className="text-sm leading-5 text-ink-600">Sur chaque document, apposez :</p>
+          <p className="text-sm leading-5 text-ink-600">
+            {photoOnly ? 'Sur la feuille, apposez :' : 'Sur chaque document, apposez :'}
+          </p>
           <ul className="mt-2 flex flex-col gap-1.5">
             {marks.map((mark) => (
               <li key={mark} className="flex items-center gap-2.5">
@@ -250,10 +304,11 @@ export const LandingPage = () => {
       {/* --- 3 ---------------------------------------------------------- */}
       <section className="mt-7">
         <h2 className="text-xs font-bold uppercase tracking-wide text-ink-400">
-          3 · Renvoyez les pages signées
+          {stepNo(3)} · Renvoyez les pages signées
         </h2>
         <p className="mt-1.5 text-[13px] leading-5 text-ink-400">
           Photographiez chaque page signée, bien à plat et bien éclairée, ou envoyez un scan PDF.
+          Avant l’envoi, des voyants vous disent si la photo est nette, éclairée et bien cadrée.
         </p>
 
         {data?.requireLocation && (
@@ -263,13 +318,73 @@ export const LandingPage = () => {
           </p>
         )}
 
-        <Button
-          className="mt-3"
-          loading={send.isPending}
-          onClick={() => fileInput.current?.click()}
-        >
-          Envoyer les pages signées
-        </Button>
+        {pending.length === 0 ? (
+          <Button
+            className="mt-3"
+            loading={scanning}
+            onClick={() => fileInput.current?.click()}
+          >
+            {scanning ? 'Analyse des photos…' : 'Photographier les pages signées'}
+          </Button>
+        ) : (
+          <div className="mt-3 rounded-xl bg-white p-3.5 ring-1 ring-ink-200">
+            <p className="text-sm font-semibold text-ink-900">
+              {pending.length} page{pending.length > 1 ? 's' : ''} prête{pending.length > 1 ? 's' : ''} à
+              envoyer
+            </p>
+            <ul className="mt-2.5 flex flex-col gap-3">
+              {pending.map((p, i) => (
+                <li key={`${p.file.name}-${i}`} className="flex gap-3">
+                  {p.url ? (
+                    <img
+                      src={p.url}
+                      alt=""
+                      className="h-20 w-16 shrink-0 rounded-lg object-cover ring-1 ring-ink-200"
+                    />
+                  ) : (
+                    <span className="flex h-20 w-16 shrink-0 items-center justify-center rounded-lg bg-ink-100 text-2xl">
+                      📄
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium text-ink-900">{p.file.name}</p>
+                    {p.url ? (
+                      <QualityChips
+                        quality={p.quality}
+                        pageFound={p.scanned || Boolean(p.quality?.sheet)}
+                        className="mt-1.5 [&>span]:!bg-opacity-100"
+                      />
+                    ) : (
+                      <p className="mt-1 text-[12.5px] text-ink-400">Scan PDF, envoyé tel quel.</p>
+                    )}
+                    {p.quality?.overall === 'bad' && (
+                      <p className="mt-1.5 text-[12.5px] leading-4 text-red-700">
+                        Photo difficile à lire : reprenez-la si vous pouvez.
+                      </p>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-3 flex flex-col gap-2">
+              <Button loading={send.isPending} onClick={() => void upload()}>
+                Envoyer {pending.length > 1 ? `ces ${pending.length} pages` : 'cette page'}
+              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  disabled={send.isPending || scanning}
+                  onClick={() => fileInput.current?.click()}
+                >
+                  Ajouter une page
+                </Button>
+                <Button variant="secondary" disabled={send.isPending} onClick={discardPending}>
+                  Reprendre
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
         <input
           ref={fileInput}
           type="file"
@@ -278,7 +393,7 @@ export const LandingPage = () => {
           accept="image/*,application/pdf"
           multiple
           hidden
-          onChange={(e) => void upload(e.target.files)}
+          onChange={(e) => void prepare(e.target.files)}
         />
 
         {sent.length > 0 && (

@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { ATTESTATION_SHEET_V1, sheetFieldTargetsDocument } from '@scansign/shared';
 import {
   downloadTemplatePdf,
   useCreateTemplateFromPdf,
@@ -8,7 +9,27 @@ import {
 } from '../lib/queries';
 import { ApiRequestError } from '../lib/api';
 import { Page } from '../components/Layout';
-import { Button, Card, EmptyState, Field, Modal, Spinner, formatDate } from '../components/ui';
+import { Button, Card, EmptyState, Field, Modal, Select, Spinner, formatDate } from '../components/ui';
+
+/**
+ * The documents the capture sheet expects a template for.
+ *
+ * The sheet's three signature boxes each sign a group of documents. For the
+ * sheet to route a returned signature, one template per document must exist,
+ * carry a signature zone, and be tied to its box — by keyword in its name or
+ * explicitly. This list is the checklist: each row says which box signs it,
+ * whether a template already answers, and offers to create the missing one
+ * with the name and the box already filled in.
+ */
+const EXPECTED_TEMPLATES: Array<{ name: string; fieldId: string }> = [
+  { name: 'Devis', fieldId: 'signature_1' },
+  { name: 'Étude', fieldId: 'signature_1' },
+  { name: 'Absence de tampon', fieldId: 'signature_1' },
+  { name: 'AH', fieldId: 'signature_2' },
+  { name: 'Attestation de stockage', fieldId: 'signature_2' },
+  { name: "Attestation de fin d'installation", fieldId: 'signature_3' },
+  { name: "Attestation d'installation", fieldId: 'signature_3' },
+];
 
 export const TemplatesPage = () => {
   // One-off configurations are hidden by default — that is the whole point of
@@ -23,8 +44,37 @@ export const TemplatesPage = () => {
   const create = useCreateTemplateFromPdf();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [sheetField, setSheetField] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [showExpected, setShowExpected] = useState(true);
+
+  const signatureBoxes = ATTESTATION_SHEET_V1.fields.filter((f) => f.type === 'signature');
+  const boxTitle = (id: string) => signatureBoxes.find((f) => f.id === id)?.label ?? id;
+
+  /** Open the creation form with a row of the checklist already filled in. */
+  const startExpected = (expected: { name: string; fieldId: string }) => {
+    setName(expected.name);
+    setSheetField(expected.fieldId);
+    setFile(null);
+    setCreating(true);
+  };
+
+  /**
+   * Does an existing template answer this row? By explicit box first; else by
+   * the sheet's own keyword rule on the template's name — the same rule the
+   * crop screen applies, so what shows green here routes there.
+   */
+  const templateFor = (expected: { name: string; fieldId: string }) => {
+    const field = signatureBoxes.find((f) => f.id === expected.fieldId);
+    const items = data?.items ?? [];
+    return items.find((t) => {
+      const zoneBox = t.zones?.find((z) => z.type === 'signature' && z.sheetField)?.sheetField;
+      const chosen = zoneBox ?? t.sheetField;
+      if (chosen) return chosen === expected.fieldId && sheetFieldTargetsDocument({ targets: [expected.name] }, [t.name]) ;
+      return field ? sheetFieldTargetsDocument(field, [t.name]) && sheetFieldTargetsDocument({ targets: [expected.name] }, [t.name]) : false;
+    });
+  };
 
   /** Name it, give it the PDF it describes, then place the zones. */
   const submitNew = (event: FormEvent) => {
@@ -32,11 +82,12 @@ export const TemplatesPage = () => {
     if (!file) return;
     setError(null);
     create.mutate(
-      { name, file },
+      { name, file, sheetField: sheetField || null },
       {
         onSuccess: (template) => {
           setCreating(false);
           setName('');
+          setSheetField('');
           setFile(null);
           navigate(`/templates/${template.id}`);
         },
@@ -82,6 +133,63 @@ export const TemplatesPage = () => {
           <p className="text-sm text-red-700">{error}</p>
         </Card>
       )}
+
+      <Card className="mb-4 p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold">Templates attendus par la feuille de signature</h2>
+            <p className="mt-1 text-xs text-ink-400">
+              L’attestation simplifiée porte trois cases de signature, une par groupe de documents.
+              Pour que chaque case aille au bon endroit, il faut un template par document, avec
+              une zone de signature, rattaché à sa case (par son nom, ou explicitement).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowExpected((v) => !v)}
+            className="shrink-0 text-xs font-medium text-brand-600 hover:underline"
+          >
+            {showExpected ? 'Masquer' : 'Afficher'}
+          </button>
+        </div>
+        {showExpected && (
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {EXPECTED_TEMPLATES.map((expected) => {
+              const existing = templateFor(expected);
+              const hasSignature = existing?.zones?.some((z) => z.type === 'signature') ?? false;
+              const tone = !existing
+                ? 'ring-ink-200 bg-white'
+                : hasSignature
+                  ? 'ring-emerald-200 bg-emerald-50'
+                  : 'ring-amber-200 bg-amber-50';
+              return (
+                <li key={expected.name} className={`rounded-lg p-3 ring-1 ${tone}`}>
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <span>{!existing ? '○' : hasSignature ? '✅' : '⚠️'}</span>
+                    <span className="truncate">{expected.name}</span>
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-ink-500">
+                    Case : {boxTitle(expected.fieldId)}
+                  </p>
+                  <div className="mt-2">
+                    {!existing ? (
+                      <Button variant="secondary" onClick={() => startExpected(expected)}>
+                        Créer ce template
+                      </Button>
+                    ) : (
+                      <Link to={`/templates/${existing.id}`}>
+                        <Button variant="secondary">
+                          {hasSignature ? 'Ouvrir' : 'Ajouter la zone de signature'}
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Card>
 
       {isLoading ? (
         <Spinner />
@@ -161,6 +269,19 @@ export const TemplatesPage = () => {
             autoFocus
             hint="Ce que décrit ce template : Devis, Contrat de vente, Mandat…"
           />
+
+          <Select
+            label="Case de signature sur la feuille"
+            value={sheetField}
+            onChange={(e) => setSheetField(e.target.value)}
+          >
+            <option value="">Automatique — d’après le nom</option>
+            {signatureBoxes.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </Select>
 
           <div>
             <span className="mb-1.5 block text-sm font-medium text-ink-800">Document modèle</span>

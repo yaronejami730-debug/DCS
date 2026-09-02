@@ -33,7 +33,7 @@ export interface DocumentRow {
   signing_session_id: string | null;
   /** Which variant of those cutouts, so a re-stamp reproduces the same mark. */
   variant_index: number | null;
-  templates?: { id: string; name: string } | null;
+  templates?: { id: string; name: string; sheet_field?: string | null } | null;
 }
 
 export const toDocument = (row: DocumentRow): Document => ({
@@ -53,7 +53,9 @@ export const toDocument = (row: DocumentRow): Document => ({
   errorMessage: row.error_message,
   createdAt: row.created_at,
   signingSessionId: row.signing_session_id ?? null,
-  template: row.templates ?? null,
+  template: row.templates
+    ? { id: row.templates.id, name: row.templates.name, sheetField: row.templates.sheet_field ?? null }
+    : null,
 });
 
 export const toFolder = (row: FolderRow): Folder => ({
@@ -70,4 +72,4 @@ export const toFolder = (row: FolderRow): Folder => ({
   documents: (row.documents ?? []).map(toDocument),
 });
 
-export const FOLDER_SELECT = '*, documents (*, templates:template_id (id, name))';
+export const FOLDER_SELECT = '*, documents (*, templates:template_id (id, name, sheet_field))';

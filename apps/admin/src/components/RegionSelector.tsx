@@ -47,6 +47,14 @@ export interface RegionSelectorProps {
   tint?: string;
   /** Seeds the first box when `value` is null. */
   defaultRect?: NormalizedRect;
+  /**
+   * Other boxes to show alongside the active one — the sheet's detected
+   * fields, each in its type's colour, so the operator sees every capture at
+   * once. Outlines only; the active box is the one being edited.
+   */
+  ghosts?: Array<{ id: string; rect: NormalizedRect; tint: string; label: string; muted?: boolean }>;
+  /** Show the photo and the ghosts only: no active box, no dimming, no gestures. */
+  ghostsOnly?: boolean;
 }
 
 type Mode = 'move' | 'draw' | RectCorner;
@@ -61,6 +69,8 @@ export const RegionSelector = ({
   onChange,
   tint = '#2f5fe0',
   defaultRect = { x: 0.15, y: 0.3, width: 0.7, height: 0.4 },
+  ghosts = [],
+  ghostsOnly = false,
 }: RegionSelectorProps) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -313,7 +323,9 @@ export const RegionSelector = ({
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onPointerLeave={() => setHover(null)}
-        className="relative mx-auto touch-none overflow-hidden rounded-xl bg-black select-none"
+        className={`relative mx-auto touch-none overflow-hidden rounded-xl bg-black select-none ${
+          ghostsOnly ? 'pointer-events-none' : ''
+        }`}
         style={{
           width: boxWidth,
           height: boxHeight,
@@ -339,6 +351,8 @@ export const RegionSelector = ({
         />
 
         {/* Dim everything outside the selection. */}
+        {!ghostsOnly && (
+        <>
         <div
           className="pointer-events-none absolute bg-ink-900/55"
           style={{ left: 0, top: 0, right: 0, height: top }}
@@ -355,7 +369,32 @@ export const RegionSelector = ({
           className="pointer-events-none absolute bg-ink-900/55"
           style={{ left: left + width, top, right: 0, height }}
         />
+        </>
+        )}
 
+        {ghosts.map((ghost) => (
+          <div
+            key={ghost.id}
+            className="pointer-events-none absolute rounded-sm"
+            style={{
+              left: ghost.rect.x * boxWidth,
+              top: ghost.rect.y * boxHeight,
+              width: ghost.rect.width * boxWidth,
+              height: ghost.rect.height * boxHeight,
+              border: `2px ${ghost.muted ? 'dashed' : 'solid'} ${ghost.tint}`,
+              opacity: ghost.muted ? 0.45 : 0.9,
+            }}
+          >
+            <span
+              className="absolute left-0 top-0 -translate-y-full rounded-t px-1.5 py-0.5 text-[10px] font-semibold text-white"
+              style={{ backgroundColor: ghost.tint }}
+            >
+              {ghost.label}
+            </span>
+          </div>
+        ))}
+
+        {!ghostsOnly && (
         <div
           className="pointer-events-none absolute rounded-sm"
           style={{
@@ -387,8 +426,9 @@ export const RegionSelector = ({
             />
           ))}
         </div>
+        )}
 
-        {!dragging && (
+        {!dragging && !ghostsOnly && (
           <div className="pointer-events-none absolute inset-x-0 bottom-2.5 flex justify-center">
             <span className="rounded-full bg-ink-900/80 px-3 py-1.5 text-xs font-medium text-white">
               Glissez le cadre · tirez les coins
@@ -397,6 +437,7 @@ export const RegionSelector = ({
         )}
       </div>
 
+      {!ghostsOnly && (
       <div className="mt-3.5 flex flex-col items-center gap-2">
         <span className="text-xs font-bold uppercase tracking-wide text-ink-400">
           Aperçu de la découpe
@@ -424,6 +465,7 @@ export const RegionSelector = ({
           />
         </div>
       </div>
+      )}
     </div>
   );
 };

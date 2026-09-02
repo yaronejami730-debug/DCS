@@ -37,6 +37,7 @@ import {
 import { createExtractionProvider } from '../services/extraction/index.js';
 import { generateVariants } from '../services/variants.js';
 import { detectInkRegionsSafely } from '../services/detect.js';
+import { detectSheetSafely } from '../services/sheet.js';
 import { classifyMark, classificationAvailable } from '../services/classify.js';
 import { processSigningSession } from '../services/processing.js';
 import { loadTemplateZones, requiredMarksForFolder } from '../services/templates.js';
@@ -396,6 +397,48 @@ sessionRoutes.post('/signing-sessions/:id/classify-mark', async (c) => {
 
   const result = await classifyMark(crop);
   return c.json({ available: true, ...result });
+});
+
+/**
+ * Read the capture sheet's markers off this session's photo.
+ *
+ * When the photo is the printed "feuille de signature", its corner squares
+ * locate every box: the console gets each field's rectangle, its type and the
+ * documents it is meant for, and opens the selector already framed. Console
+ * only — the technician never crops. Returns { sheet: null } for any photo that
+ * is not a sheet, which is not an error: the operator frames by hand.
+ */
+sessionRoutes.post('/signing-sessions/:id/detect-sheet', async (c) => {
+  const user = c.get('user');
+  if (c.get('share')) throw forbidden('Réservé à la console.');
+
+  const { data: session } = await db
+    .from('signing_sessions')
+    .select('*')
+    .eq('id', c.req.param('id'))
+    .eq('owner_id', user.id)
+    .maybeSingle<SessionRow>();
+  if (!session) throw notFound('Session introuvable.');
+  assertShareScope(c.get('share'), session.folder_id);
+
+  const path = session.photo_path;
+  if (!path) throw badRequest('Aucune photo pour cette session.', 'IMAGE_PROCESSING_FAILED');
+  const photo = await downloadObject(path);
+  const sheet = await detectSheetSafely(photo);
+
+  await audit({
+    ownerId: user.id,
+    folderId: session.folder_id,
+    action: 'session.sheet_detected',
+    metadata: {
+      sessionId: session.id,
+      layout: sheet?.layoutId ?? null,
+      rotation: sheet?.rotation ?? null,
+      fields: sheet?.fields.map((f) => ({ id: f.id, markers: f.markersFound })) ?? [],
+    },
+  });
+
+  return c.json({ sheet });
 });
 
 sessionRoutes.post('/signing-sessions/:id/preview-cutout', async (c) => {

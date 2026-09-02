@@ -35,7 +35,18 @@ const ShareScope = ({ children }: { children: React.ReactNode }) => {
   // effect meant the first request of every session went out unauthenticated.
   setShareToken(token ?? null);
 
-  useEffect(() => () => setShareToken(null), []);
+  /**
+   * Re-assert on mount, clear on unmount — and re-assert again if the token in
+   * the URL changes. Setting it only in render and clearing only in cleanup
+   * left a hole: React's StrictMode (and Fast Refresh) mounts, unmounts and
+   * remounts effects, so the cleanup ran, nothing set the token back, and every
+   * request after the first went out without a credential — « Authentification
+   * requise » the moment the technician sent a photo.
+   */
+  useEffect(() => {
+    setShareToken(token ?? null);
+    return () => setShareToken(null);
+  }, [token]);
 
   if (!token) return <Navigate to="/" replace />;
   return <>{children}</>;

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCreateFolder, useDeleteFolder, useFolders } from '../lib/queries';
+import { ApiRequestError } from '../lib/api';
 import { Page } from '../components/Layout';
 import {
   Button,
@@ -21,9 +22,11 @@ export const FoldersPage = () => {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    setError(null);
     create.mutate(
       { name },
       {
@@ -32,6 +35,10 @@ export const FoldersPage = () => {
           setName('');
           navigate(`/folders/${folder.id}`);
         },
+        // Said in the modal, not swallowed: a silent failure looked like a
+        // button that did nothing.
+        onError: (e) =>
+          setError(e instanceof ApiRequestError ? e.message : 'Création du dossier impossible.'),
       },
     );
   };
@@ -93,6 +100,7 @@ export const FoldersPage = () => {
             required
             autoFocus
           />
+          {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" type="button" onClick={() => setCreating(false)}>
               Annuler

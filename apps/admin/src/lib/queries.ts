@@ -275,10 +275,20 @@ export const downloadTemplatePdf = (templateId: string) =>
 export const useCreateTemplateFromPdf = () => {
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: ({ name, file }: { name: string; file: File }) => {
+    mutationFn: ({
+      name,
+      file,
+      sheetField,
+    }: {
+      name: string;
+      file: File;
+      /** Capture-sheet box that signs this template; see captureSheet.ts. */
+      sheetField?: string | null;
+    }) => {
       const form = new FormData();
       form.append('name', name);
       form.append('file', file);
+      if (sheetField) form.append('sheetField', sheetField);
       return api<Template>('/templates/upload', { method: 'POST', form });
     },
     onSuccess: () => invalidate('templates'),
@@ -455,6 +465,24 @@ export const useStartCropSession = () =>
     },
   });
 
+import type { GeneratedVariant, SheetDetection } from '@scansign/shared';
+export type { SheetDetection, SheetFieldDetection } from '@scansign/shared';
+
+/**
+ * Read the printed capture sheet's markers off the session photo.
+ *
+ * Null when the photo is not a sheet — the operator then frames by hand, as
+ * before. When it is, every box arrives already located, typed and addressed.
+ */
+export const useDetectSheet = () =>
+  useMutation({
+    mutationFn: ({ sessionId }: { sessionId: string }) =>
+      api<{ sheet: SheetDetection | null }>(`/signing-sessions/${sessionId}/detect-sheet`, {
+        method: 'POST',
+        json: {},
+      }),
+  });
+
 export interface MarkClassification {
   available: boolean;
   type: ZoneType | null;
@@ -475,6 +503,26 @@ export const useClassifyMark = () =>
         method: 'POST',
         json: { region },
       }),
+  });
+
+/** A spread of variants of one framed mark, as data URLs — to show, not to store. */
+export const usePreviewVariants = () =>
+  useMutation({
+    mutationFn: ({
+      sessionId,
+      mark,
+      region,
+      count = 3,
+    }: {
+      sessionId: string;
+      mark: ZoneType;
+      region: NormalizedRect;
+      count?: number;
+    }) =>
+      api<{ mark: ZoneType; variants: GeneratedVariant[] }>(
+        `/signing-sessions/${sessionId}/preview-variants`,
+        { method: 'POST', json: { mark, region, count } },
+      ),
   });
 
 export const usePreviewCutout = () =>
@@ -538,6 +586,8 @@ export interface DocumentZone {
   type: ZoneType;
   rect: NormalizedRect;
   index: number;
+  /** Which capture-sheet box fills this zone, when the template said. */
+  sheetField?: string | null;
 }
 
 /**

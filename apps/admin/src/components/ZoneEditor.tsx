@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { ZONE_TYPE_LABEL, type NormalizedRect, type ZoneType } from '@scansign/shared';
+import type { NormalizedRect, ZoneType } from '@scansign/shared';
+import { zoneLabel } from '../lib/zoneLabel';
 
 export interface EditorZone {
   /** Local id; the server assigns real ids on save. */
@@ -7,6 +8,8 @@ export interface EditorZone {
   page: number;
   type: ZoneType;
   rect: NormalizedRect;
+  /** Capture-sheet box this zone is filled from; see zoneLabel. */
+  sheetField?: string | null;
 }
 
 const TONE: Record<ZoneType, { box: string; label: string }> = {
@@ -175,7 +178,7 @@ export const ZoneEditor = ({
             <span
               className={`absolute -top-5 left-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-white ${tone.label}`}
             >
-              {ZONE_TYPE_LABEL[zone.type]}
+              {zoneLabel(zone, zones)}
             </span>
             <span
               onPointerDown={(e) => startTransform(e, zone, 'resize')}

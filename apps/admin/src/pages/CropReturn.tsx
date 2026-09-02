@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import {
+  HANDWRITTEN_MARKS,
   ZONE_TYPE_LABEL,
   marksToCapture,
+  sheetFieldsForDocument,
+  type Document,
   type NormalizedRect,
   type SigningSession,
   type ZoneType,
@@ -17,8 +21,13 @@ import {
   useSubmitRegions,
   useMarkReturnHandled,
   useClassifyMark,
+  useDetectSheet,
+  usePreviewVariants,
+  type SheetDetection,
+  type SheetFieldDetection,
 } from '../lib/queries';
 import { api, ApiRequestError } from '../lib/api';
+import { detectSheetOnImage, openScanPage } from '../lib/sheetPage';
 import { Page } from '../components/Layout';
 import { RegionSelector } from '../components/RegionSelector';
 import { CutoutPreview } from '../components/CutoutPreview';
@@ -50,40 +59,6 @@ const TINT: Record<ZoneType, string> = {
   quote_date: '#d96b16',
   free_text: '#2a8a96',
   checkbox: '#5a6472',
-};
-
-/**
- * Render one page of the scan to a JPEG.
- *
- * Scale 2 rather than 1: the extraction engine works on the crop, and a
- * signature occupying a tenth of an A4 page rendered at screen resolution is a
- * hundred pixels of ink with nothing to separate from the paper.
- */
-const rasterise = async (url: string, page: number): Promise<Blob> => {
-  const doc = await pdfjs.getDocument({ url }).promise;
-  const pdfPage = await doc.getPage(page);
-  const viewport = pdfPage.getViewport({ scale: 2 });
-
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('canvas indisponible');
-
-  // White behind the page: a PDF renders with a transparent background, and a
-  // transparent JPEG becomes black, against which no ink is findable.
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-
-  await pdfPage.render({ canvas, canvasContext: context, viewport }).promise;
-
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('encodage impossible'))),
-      'image/jpeg',
-      0.92,
-    );
-  });
 };
 
 /**
@@ -123,7 +98,71 @@ const fetchImage = async (url: string): Promise<Blob> => {
   });
 };
 
-type ServedState = 'processing' | 'completed' | 'error';
+type ServedState = 'processing' | 'completed' | 'error' | 'skipped';
+
+/**
+ * The names the sheet routing reads off a folder document.
+ *
+ * The box a document's signature comes from is, in order: the box its zones
+ * name ("Signature repère 2" drawn on the template), the template's own choice,
+ * else the keywords in its name — resolved by sheetFieldsForDocument.
+ */
+const routingDoc = (
+  d: Document,
+  zones: ReadonlyArray<{ type: ZoneType; sheetField?: string | null }> = [],
+) => ({
+  filename: d.filename,
+  templateName: d.template?.name ?? null,
+  sheetField:
+    zones.find((z) => z.type === 'signature' && z.sheetField)?.sheetField ??
+    d.template?.sheetField ??
+    null,
+});
+
+/**
+ * What the sheet can do for one document.
+ *
+ * The document's template says which marks it needs; the sheet says which
+ * boxes were written in and which documents each box is for. Crossing the two
+ * gives a verdict the operator can act on without picking anything:
+ *
+ *   ready    every mark the template asks for has a filled box addressed to it;
+ *   partial  some have, some are empty on the sheet or have no box at all;
+ *   blocked  nothing on the sheet can go onto this document;
+ *   done     already signed, or served in this session;
+ *   no_zones the template has no zone — nothing to fill;
+ *   loading  zones not fetched yet.
+ */
+interface PlanEntry {
+  doc: Document;
+  status: 'loading' | 'no_zones' | 'blocked' | 'partial' | 'ready' | 'done';
+  /** Marks the template asks for. */
+  types: ZoneType[];
+  /** Filled boxes that go onto this document, by mark. */
+  provided: Array<{ type: ZoneType; field: SheetFieldDetection }>;
+  /** Boxes addressed to this document that nobody wrote in. */
+  empty: Array<{ type: ZoneType; field: SheetFieldDetection }>;
+  /** Marks the template asks for that no box of the sheet is for. */
+  unrouted: ZoneType[];
+}
+
+const STATUS_LABEL: Record<PlanEntry['status'], string> = {
+  loading: 'Lecture des zones…',
+  no_zones: 'Aucune zone sur le template',
+  blocked: 'Rien à apposer',
+  partial: 'Incomplet',
+  ready: 'Prêt à apposer',
+  done: 'Déjà signé',
+};
+
+const STATUS_TONE: Record<PlanEntry['status'], string> = {
+  loading: 'bg-ink-100 text-ink-500',
+  no_zones: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
+  blocked: 'bg-red-50 text-red-700 ring-1 ring-red-200',
+  partial: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
+  ready: 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
+  done: 'bg-ink-100 text-ink-500',
+};
 
 export const CropReturnPage = () => {
   const { id: folderId = '', returnId = '' } = useParams<{ id: string; returnId: string }>();
@@ -137,6 +176,30 @@ export const CropReturnPage = () => {
   const submit = useSubmitRegions();
   const markHandled = useMarkReturnHandled();
   const classify = useClassifyMark();
+  const detectSheet = useDetectSheet();
+  /**
+   * The printed capture sheet, if this page is one.
+   *
+   * Detected once per page and kept across the sessions opened on it: the
+   * photo does not change between documents, so neither do the boxes.
+   */
+  const [sheet, setSheet] = useState<SheetDetection | null>(null);
+  const [sheetChecked, setSheetChecked] = useState(false);
+  const sheetFor = useRef<string>('');
+  /** Which (document, session) pair the boxes were already dropped onto. */
+  const autoFilledFor = useRef<string>('');
+  const [autoRunning, setAutoRunning] = useState(false);
+  /** Show the hand-framing controls even though a sheet was recognised. */
+  const [manual, setManual] = useState(false);
+  const previewVariants = usePreviewVariants();
+  /**
+   * Variants of each filled handwritten box, as the plan will stamp them: the
+   * base and two more, so the operator sees that two zones of one document
+   * will not carry the same bitmap. Loaded once per box, in the background.
+   */
+  const [variantPreviews, setVariantPreviews] = useState<
+    Record<string, Array<{ index: number; dataUrl: string }> | 'loading' | 'failed'>
+  >({});
   /** The type Claude recognised for the current box, offered as a chip. */
   const [suggested, setSuggested] = useState<{ type: ZoneType; confidence: number | null } | null>(
     null,
@@ -145,6 +208,23 @@ export const CropReturnPage = () => {
 
   const item = returns?.items.find((r) => r.id === returnId);
   const contracts = (folder?.documents ?? []).filter((d) => d.role !== 'for_signing');
+
+  /**
+   * Zones of every contract at once — the plan needs all of them, not the one
+   * the operator would have picked. Fetched only once a sheet is recognised.
+   */
+  const zoneQueries = useQueries({
+    queries: contracts.map((d) => ({
+      queryKey: ['document-zones', d.id],
+      queryFn: () =>
+        api<{ zones: Array<{ type: ZoneType; sheetField?: string | null }> }>(
+          `/documents/${d.id}/placement`,
+        ),
+      enabled: Boolean(sheet),
+      staleTime: 60_000,
+    })),
+  });
+  const zoneData = zoneQueries.map((q) => q.data);
 
   const [page, setPage] = useState(Number(params.get('page') ?? 1) || 1);
   const [pageBlob, setPageBlob] = useState<Blob | null>(null);
@@ -167,6 +247,10 @@ export const CropReturnPage = () => {
   const { data: zonesData, isLoading: zonesLoading } = useDocumentZones(targetDoc || undefined);
 
   const preparedFor = useRef<string | null>(null);
+  /** The return whose pages were already searched for the sheet. */
+  const autoPagedFor = useRef<string | null>(null);
+  /** Monotonic run counter for the prepare effect; see its `myRun`. */
+  const prepareRun = useRef(0);
   /** Bumped by the retry button to force the prepare effect to run again. */
   const [retryToken, setRetryToken] = useState(0);
   /**
@@ -211,7 +295,18 @@ export const CropReturnPage = () => {
     if (preparedFor.current === key) return;
     preparedFor.current = key;
 
+    /**
+     * Which run is current. A run is stale — and stops committing state —
+     * when a newer one has started (page change, retry). It is NOT stale when
+     * React merely re-invokes the effect: StrictMode in development runs the
+     * cleanup and the effect again on mount, and the guard above then lets the
+     * first run carry on. Cancelling in the cleanup instead left that run mute
+     * and the guard refusing a second — a spinner that lasted the full 40 s
+     * ceiling, which is what "the crop page is slow" actually was.
+     */
+    const myRun = ++prepareRun.current;
     let cancelled = false;
+    const isStale = () => cancelled || prepareRun.current !== myRun;
     if (localUrlRef.current) {
       URL.revokeObjectURL(localUrlRef.current);
       localUrlRef.current = null;
@@ -228,7 +323,7 @@ export const CropReturnPage = () => {
      */
     const HARD_LIMIT_MS = 40_000;
     const deadline = setTimeout(() => {
-      if (cancelled) return;
+      if (isStale()) return;
       cancelled = true;
       preparedFor.current = null;
       setPreparing(false);
@@ -243,15 +338,50 @@ export const CropReturnPage = () => {
       setSessionId(null);
       setRegions({});
       setCurrent(null);
+      setSheet(null);
+      setSheetChecked(false);
+      sheetFor.current = '';
+      autoFilledFor.current = '';
       try {
         setPrepareStep('Ouverture du scan…');
         const url = urlRef.current;
         if (!url) throw new Error('URL du scan indisponible');
-        const blob =
-          item.contentType === 'application/pdf'
-            ? await rasterise(url, page)
-            : await fetchImage(url);
-        if (cancelled) return;
+
+        /**
+         * A multi-page PDF opens on the page that carries the capture sheet.
+         *
+         * Searched once per return, and only when the URL did not name a
+         * page: the attestation's markers are on page 2, and opening on page 1
+         * read as "the markers are not detected". The search reuses the very
+         * render shown on screen, so it costs nothing on the common case and a
+         * page or two of drawing otherwise.
+         */
+        let blob: Blob;
+        let localSheet: SheetDetection | null = null;
+        if (item.contentType === 'application/pdf') {
+          const search =
+            (item.pageCount ?? 1) > 1 && !params.get('page') && autoPagedFor.current !== item.id;
+          autoPagedFor.current = item.id;
+          const rendered = await openScanPage(url, page, {
+            search,
+            pageCount: item.pageCount ?? 1,
+            onStep: (label) => {
+              if (!isStale()) setPrepareStep(label);
+            },
+          });
+          if (isStale()) return;
+          if (rendered.page !== page) {
+            // Keep the guard in step with the page now shown, so the effect's
+            // re-run for the new page number does not prepare it a second time.
+            preparedFor.current = `${item.id}:${rendered.page}`;
+            setPage(rendered.page);
+          }
+          blob = rendered.blob;
+          localSheet = rendered.sheet;
+        } else {
+          blob = await fetchImage(url);
+        }
+        if (isStale()) return;
         setPageBlob(blob);
 
         /**
@@ -266,14 +396,29 @@ export const CropReturnPage = () => {
          * box it has long since arrived.
          */
         const bitmap = await createImageBitmap(blob);
-        if (cancelled) {
+        if (isStale()) {
           bitmap.close();
           return;
+        }
+        // A photo return: detect here too, on the decoded bitmap.
+        if (!localSheet && item.contentType !== 'application/pdf') {
+          localSheet = detectSheetOnImage(bitmap, bitmap.width, bitmap.height);
         }
         const localUrl = URL.createObjectURL(blob);
         localUrlRef.current = localUrl;
         setPhoto({ url: localUrl, width: bitmap.width, height: bitmap.height });
         bitmap.close();
+        /**
+         * The boxes, now — from the detection made while rendering. The server
+         * is asked only when the browser found nothing, as a second opinion;
+         * waiting on the upload and a round trip before drawing a single box
+         * was most of what made this page feel slow.
+         */
+        if (localSheet) {
+          setSheet(localSheet);
+          setSheetChecked(true);
+          sheetFor.current = 'local';
+        }
         setPreparing(false);
         clearTimeout(deadline);
 
@@ -281,10 +426,10 @@ export const CropReturnPage = () => {
         startSession
           .mutateAsync({ folderId, returnId: item.id, page: blob })
           .then((created) => {
-            if (!cancelled) setSessionId(created.session.id);
+            if (!isStale()) setSessionId(created.session.id);
           })
           .catch((e) => {
-            if (!cancelled) {
+            if (!isStale()) {
               setError(
                 e instanceof ApiRequestError
                   ? e.message
@@ -294,7 +439,7 @@ export const CropReturnPage = () => {
             }
           });
       } catch (e) {
-        if (!cancelled) {
+        if (!isStale()) {
           setError(
             e instanceof ApiRequestError ? e.message : "Cette page n'a pas pu être préparée.",
           );
@@ -305,15 +450,41 @@ export const CropReturnPage = () => {
       }
     };
     void run();
-    return () => {
-      cancelled = true;
-      clearTimeout(deadline);
-    };
+    // No cleanup on purpose: see `myRun`. A superseded run goes stale by the
+    // counter; an unmounted one commits into nothing, which React tolerates.
+
     // item?.url deliberately absent: it changes on every poll. See urlRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id, page, folderId, retryToken]);
 
   const handleChange = useCallback((rect: NormalizedRect) => setCurrent(rect), []);
+
+  /**
+   * Look for the sheet's markers as soon as the first session on this page is
+   * open. One call per page: later sessions reuse the same photo.
+   */
+  useEffect(() => {
+    if (!sessionId || !item) return;
+    // The browser already read the sheet off the render: nothing to ask.
+    if (sheetFor.current === 'local') return;
+    // Per session, not per page: when the page changed, the effect fired once
+    // more with the OLD session still in state, recorded the new page as done,
+    // and then skipped the session that actually held the new page's photo.
+    const key = sessionId;
+    if (sheetFor.current === key) return;
+    sheetFor.current = key;
+    detectSheet.mutate(
+      { sessionId },
+      {
+        onSuccess: (r) => {
+          setSheet(r.sheet);
+          setSheetChecked(true);
+        },
+        onError: () => setSheetChecked(true),
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, item?.id, page]);
 
   /**
    * Recognise the framed mark's type once the box has settled.
@@ -378,6 +549,51 @@ export const CropReturnPage = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetDoc, markChoices.length]);
+
+  /**
+   * Drop the sheet's boxes onto the selector for the chosen document.
+   *
+   * This is the point of the markers: the operator picks the document and the
+   * boxes meant for it are already framed, typed and listed — the signature
+   * from the right group, the mention, the name, the date — each still a
+   * rectangle they can drag. Once per (document, session), so a box they
+   * removed on purpose does not come back on the next render.
+   */
+  useEffect(() => {
+    if (!sheet || !sessionId || !targetDoc || zonesLoading) return;
+    const key = `${targetDoc}:${sessionId}`;
+    if (autoFilledFor.current === key) return;
+    const doc = contracts.find((d) => d.id === targetDoc);
+    if (!doc) return;
+    autoFilledFor.current = key;
+
+    // Only boxes someone wrote in: an empty box would be extracted as nothing
+    // and fail the whole pass with « aucune trace d'encre ».
+    const picked = sheetFieldsForDocument(
+      sheet.fields.filter((f) => f.filled),
+      routingDoc(doc, documentZones),
+      zoneTypesInDoc,
+    );
+    const next: Partial<Record<ZoneType, NormalizedRect>> = {};
+    for (const [type, field] of Object.entries(picked) as Array<[ZoneType, (typeof sheet.fields)[number]]>) {
+      next[type] = field.rect;
+    }
+    const types = Object.keys(next) as ZoneType[];
+    setRegions(next);
+    if (types.length > 0) {
+      const first = markChoices.find((m) => types.includes(m)) ?? types[0]!;
+      setMark(first);
+      const rect = next[first]!;
+      // Show the box where it landed, and do not ask Claude what it is: the
+      // sheet already says.
+      classifiedFor.current = [rect.x, rect.y, rect.width, rect.height]
+        .map((n) => n.toFixed(3))
+        .join(',');
+      setCurrent(rect);
+      setResetToken((n) => n + 1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet, sessionId, targetDoc, zonesLoading, zoneTypesInDoc.join(',')]);
 
   const assign = () => {
     if (!current) return;
@@ -470,6 +686,146 @@ export const CropReturnPage = () => {
     }
   };
 
+  useEffect(() => {
+    if (!sheet || !sessionId || manual) return;
+    const pending = sheet.fields.filter(
+      (f) => f.filled && HANDWRITTEN_MARKS.includes(f.type) && !variantPreviews[f.id],
+    );
+    if (pending.length === 0) return;
+    let stopped = false;
+    void (async () => {
+      for (const field of pending) {
+        if (stopped) return;
+        setVariantPreviews((prev) => ({ ...prev, [field.id]: 'loading' }));
+        try {
+          const r = await previewVariants.mutateAsync({
+            sessionId,
+            mark: field.type,
+            region: field.rect,
+            count: 3,
+          });
+          if (!stopped) setVariantPreviews((prev) => ({ ...prev, [field.id]: r.variants }));
+        } catch {
+          if (!stopped) setVariantPreviews((prev) => ({ ...prev, [field.id]: 'failed' }));
+        }
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet, sessionId, manual]);
+
+  const plan: PlanEntry[] = useMemo(() => {
+    if (!sheet) return [];
+    return contracts.map((doc, i) => {
+      const base = { doc, types: [] as ZoneType[], provided: [], empty: [], unrouted: [] };
+      if (doc.status === 'completed' || served.some((s) => s.id === doc.id)) {
+        return { ...base, status: 'done' as const };
+      }
+      const data = zoneData[i];
+      if (!data) return { ...base, status: 'loading' as const };
+      const types = Array.from(new Set(data.zones.map((z) => z.type)));
+      if (types.length === 0) return { ...base, status: 'no_zones' as const };
+      const picked = sheetFieldsForDocument(sheet.fields, routingDoc(doc, data.zones), types);
+      const provided: PlanEntry['provided'] = [];
+      const empty: PlanEntry['empty'] = [];
+      const unrouted: ZoneType[] = [];
+      for (const type of types) {
+        const field = picked[type];
+        if (!field) unrouted.push(type);
+        else if (field.filled) provided.push({ type, field });
+        else empty.push({ type, field });
+      }
+      const status =
+        provided.length === 0 ? 'blocked' : empty.length + unrouted.length > 0 ? 'partial' : 'ready';
+      return { doc, status, types, provided, empty, unrouted };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet, contracts, served, ...zoneData]);
+
+  /**
+   * Serve every remaining document from the sheet, without a single drag.
+   *
+   * For each contract still unserved: open a session on the page (the first
+   * one reuses the session already open), read its zones, pick the boxes the
+   * sheet addresses to it, submit. A document none of the boxes fits is
+   * skipped and said so, not failed. Each pass is the exact submission the
+   * manual button makes — same pipeline, same audit trail.
+   */
+  const applyEntries = async (entries: PlanEntry[]) => {
+    if (!sheet || !pageBlob || entries.length === 0) return;
+    setAutoRunning(true);
+    setError(null);
+    try {
+      let session = sessionId;
+      let handled = false;
+      for (const entry of entries) {
+        if (entry.provided.length === 0) {
+          setServed((prev) => [...prev, { id: entry.doc.id, state: 'skipped' }]);
+          continue;
+        }
+        if (!session) {
+          const created = await startSession.mutateAsync({ folderId, returnId, page: pageBlob });
+          session = created.session.id;
+        }
+        const rect = (t: ZoneType) => entry.provided.find((p) => p.type === t)?.field.rect ?? null;
+        const submittedSession = session;
+        const docId = entry.doc.id;
+        await submit.mutateAsync({
+          sessionId: submittedSession,
+          regions: {
+            signature: rect('signature'),
+            stamp: rect('stamp'),
+            mention: rect('mention'),
+            signature_stamp: rect('signature_stamp'),
+            date: rect('date'),
+            quote_date: rect('quote_date'),
+            free_text: rect('free_text'),
+            checkbox: rect('checkbox'),
+            documentIds: [docId],
+          },
+        });
+        session = null;
+        handled = true;
+        setServed((prev) => [...prev, { id: docId, state: 'processing' }]);
+        void (async () => {
+          for (let i = 0; i < 40; i++) {
+            try {
+              const st = await api<SigningSession>(`/signing-sessions/${submittedSession}`);
+              if (st.status === 'completed' || st.status === 'error') {
+                setServed((prev) =>
+                  prev.map((x) =>
+                    x.id === docId
+                      ? { ...x, state: st.status === 'completed' ? 'completed' : 'error' }
+                      : x,
+                  ),
+                );
+                return;
+              }
+            } catch {
+              /* transient; keep polling */
+            }
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        })();
+      }
+      if (handled) markHandled.mutate({ folderId, returnId });
+      setSessionId(session);
+      setRegions({});
+      setCurrent(null);
+      setResetToken((n) => n + 1);
+      setTargetDoc('');
+    } catch (e) {
+      setError(e instanceof ApiRequestError ? e.message : 'Apposition automatique impossible.');
+    } finally {
+      setAutoRunning(false);
+    }
+  };
+
+  /** Every document the plan says is ready, in one go. */
+  const autoApplyAll = () => applyEntries(plan.filter((e) => e.status === 'ready'));
+
   const assigned = Object.keys(regions) as ZoneType[];
   /**
    * Ready to apply once at least one captured zone matches a zone the target
@@ -543,6 +899,56 @@ export const CropReturnPage = () => {
                 </div>
               )}
 
+              {sheet && (
+                <div className="mb-3 rounded-lg bg-emerald-50 p-3 ring-1 ring-emerald-200">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>📐</span>
+                    <p className="text-sm font-semibold text-emerald-800">
+                      Feuille de signature reconnue — {sheet.fields.length} cases repérées
+                    </p>
+                    {sheet.rotation !== 0 && (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                        Feuille tournée de {sheet.rotation}° : les marques seront apposées tournées
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {sheet.fields.map((f) => (
+                      <span
+                        key={f.id}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          f.filled ? 'bg-white text-emerald-900 ring-1 ring-emerald-200' : 'bg-white/60 text-ink-400'
+                        }`}
+                      >
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: TINT[f.type], opacity: f.filled ? 1 : 0.35 }}
+                        />
+                        {ZONE_TYPE_LABEL[f.type]}
+                        {f.type === 'signature' ? ` · ${f.label.toLowerCase()}` : ''}
+                        {f.filled ? '' : ' · vide'}
+                      </span>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setManual((v) => !v)}
+                      className="ml-auto text-xs font-medium text-emerald-800 underline"
+                    >
+                      {manual ? 'Revenir au plan automatique' : 'Ajuster à la main'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {sheetChecked && !sheet && detectSheet.isPending === false && (
+                <p className="mb-2 text-xs text-ink-400">
+                  Pas de feuille de signature reconnue sur cette page : encadrez les marques à la
+                  main.
+                </p>
+              )}
+              {detectSheet.isPending && (
+                <p className="mb-2 text-xs text-ink-400">Recherche des repères de la feuille…</p>
+              )}
+
               <RegionSelector
                 key={`${mark}-${resetToken}-${page}`}
                 photoUrl={photo.url}
@@ -551,12 +957,118 @@ export const CropReturnPage = () => {
                 value={current}
                 onChange={handleChange}
                 tint={TINT[mark]}
+                ghostsOnly={Boolean(sheet) && !manual}
+                ghosts={(sheet?.fields ?? [])
+                  // Every detected box, in its type's colour; the active mark's
+                  // own box is drawn by the selector itself.
+                  .filter((f) => manual ? !(regions[f.type] && f.type === mark) : true)
+                  .map((f) => ({
+                    id: f.id,
+                    rect: f.rect,
+                    tint: TINT[f.type],
+                    label: f.filled ? ZONE_TYPE_LABEL[f.type] : `${ZONE_TYPE_LABEL[f.type]} · vide`,
+                    muted: !f.filled,
+                  }))}
               />
             </>
           )}
         </Card>
 
         <div className="flex flex-col gap-4">
+          {sheet && !manual ? (
+            <Card className="p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-ink-400">
+                Plan d’apposition
+              </p>
+              <p className="mt-1 text-xs text-ink-400">
+                Ce que chaque document exige, d’après son template, et ce que la feuille fournit.
+              </p>
+              {plan.length === 0 ? (
+                <p className="mt-3 text-sm text-ink-400">Aucun document à faire signer dans ce dossier.</p>
+              ) : (
+                <ul className="mt-3 flex flex-col gap-2.5">
+                  {plan.map((entry) => (
+                    <li key={entry.doc.id} className="rounded-lg bg-ink-50 p-3 ring-1 ring-ink-200/70">
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-ink-900">{entry.doc.filename}</p>
+                          <p className="truncate text-[11px] text-ink-400">
+                            {entry.doc.template?.name
+                              ? `Template « ${entry.doc.template.name} »`
+                              : 'Sans template'}
+                          </p>
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_TONE[entry.status]}`}
+                        >
+                          {STATUS_LABEL[entry.status]}
+                        </span>
+                      </div>
+                      {(entry.status === 'ready' || entry.status === 'partial' || entry.status === 'blocked') && (
+                        <ul className="mt-2 flex flex-col gap-1 text-xs">
+                          {entry.provided.map((p) => (
+                            <li key={p.type} className="flex items-center gap-1.5 text-emerald-800">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: TINT[p.type] }} />
+                              {ZONE_TYPE_LABEL[p.type]}
+                              {p.type === 'signature' ? ` ← case ${p.field.label}` : ''}
+                            </li>
+                          ))}
+                          {entry.empty.map((p) => (
+                            <li key={p.type} className="flex items-center gap-1.5 text-amber-800">
+                              <span className="h-2 w-2 rounded-full opacity-40" style={{ backgroundColor: TINT[p.type] }} />
+                              {ZONE_TYPE_LABEL[p.type]} : case {p.type === 'signature' ? `« ${p.field.label} » ` : ''}vide sur la feuille
+                            </li>
+                          ))}
+                          {entry.unrouted.map((t) => (
+                            <li key={t} className="flex items-center gap-1.5 text-red-700">
+                              <span className="h-2 w-2 rounded-full opacity-40" style={{ backgroundColor: TINT[t] }} />
+                              {ZONE_TYPE_LABEL[t]} : aucune case de la feuille ne vise ce document
+                              {t === 'signature' ? ' — nommez le template (devis, AH, stockage…) ou choisissez sa case dans son éditeur' : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {entry.status === 'no_zones' && (
+                        <p className="mt-2 text-xs text-amber-800">
+                          Ouvrez le template et placez les zones à remplir.
+                        </p>
+                      )}
+                      {(entry.status === 'ready' || entry.status === 'partial') && (
+                        <Button
+                          variant={entry.status === 'ready' ? 'primary' : 'secondary'}
+                          className="mt-2.5 w-full"
+                          disabled={autoRunning || !pageBlob}
+                          loading={autoRunning}
+                          onClick={() => void applyEntries([entry])}
+                        >
+                          {entry.status === 'ready'
+                            ? 'Apposer sur ce document'
+                            : `Apposer seulement ${entry.provided.map((p) => ZONE_TYPE_LABEL[p.type].toLowerCase()).join(', ')}`}
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {plan.filter((e) => e.status === 'ready').length > 1 && (
+                <Button
+                  className="mt-3 w-full"
+                  loading={autoRunning}
+                  disabled={!pageBlob}
+                  onClick={() => void autoApplyAll()}
+                >
+                  Apposer les {plan.filter((e) => e.status === 'ready').length} documents prêts
+                </Button>
+              )}
+              {plan.some((e) => e.status === 'partial' || e.status === 'blocked') && (
+                <p className="mt-2 text-xs text-amber-800">
+                  Attention : des cases sont vides ou ne visent aucun document. Ces zones des PDF
+                  resteraient vides. Complétez la feuille et renvoyez-la, ou ajustez à la main.
+                </p>
+              )}
+            </Card>
+          ) : (
+          <>
           <Card className="p-4">
             {/*
               The operator's sentence, as controls: THESE marks go on THAT
@@ -717,6 +1229,51 @@ export const CropReturnPage = () => {
               </p>
             )}
           </Card>
+          </>
+          )}
+
+          {sheet && !manual && sheet.fields.some((f) => f.filled && HANDWRITTEN_MARKS.includes(f.type)) && (
+            <Card className="p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-ink-400">
+                Variantes générées
+              </p>
+              <p className="mt-1 text-xs text-ink-400">
+                Chaque zone d’un document reçoit une variante différente de la même case : deux
+                signatures sur une AH ne sont jamais le même dessin.
+              </p>
+              <ul className="mt-3 flex flex-col gap-3">
+                {sheet.fields
+                  .filter((f) => f.filled && HANDWRITTEN_MARKS.includes(f.type))
+                  .map((f) => {
+                    const state = variantPreviews[f.id];
+                    return (
+                      <li key={f.id}>
+                        <p className="flex items-center gap-1.5 text-xs font-medium text-ink-700">
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: TINT[f.type] }} />
+                          Variantes · {f.type === 'signature' ? `repère ${f.label}` : ZONE_TYPE_LABEL[f.type]}
+                        </p>
+                        {!state || state === 'loading' ? (
+                          <p className="mt-1 text-xs text-ink-400">Génération…</p>
+                        ) : state === 'failed' ? (
+                          <p className="mt-1 text-xs text-amber-700">Aperçu indisponible pour cette case.</p>
+                        ) : (
+                          <div className="mt-1.5 grid grid-cols-3 gap-2">
+                            {state.map((v) => (
+                              <div
+                                key={v.index}
+                                className="flex h-16 items-center justify-center rounded-lg bg-white p-1 ring-1 ring-ink-200"
+                              >
+                                <img src={v.dataUrl} alt="" className="max-h-full max-w-full object-contain" />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+              </ul>
+            </Card>
+          )}
 
           {served.length > 0 && (
             <Card className="p-4">
@@ -727,7 +1284,13 @@ export const CropReturnPage = () => {
                 {served.map((s) => (
                   <li key={s.id} className="flex items-center gap-2 text-sm">
                     <span className="shrink-0">
-                      {s.state === 'completed' ? '✅' : s.state === 'error' ? '❌' : '⏳'}
+                      {s.state === 'completed'
+                        ? '✅'
+                        : s.state === 'error'
+                          ? '❌'
+                          : s.state === 'skipped'
+                            ? '⏭'
+                            : '⏳'}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{docName(s.id)}</span>
                   </li>

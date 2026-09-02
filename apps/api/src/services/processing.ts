@@ -20,7 +20,7 @@ import { HttpError } from '../lib/errors.js';
 import { cropNormalizedRegion, imageSize, trimTransparentBorder } from './images.js';
 import { createExtractionProvider } from './extraction/index.js';
 import { zonesForDocument } from './placement.js';
-import { fallbackVariantIndex, variantAt, variantPlacement } from './variants.js';
+import { fallbackVariantIndex, variantAt, variantPlacement, variantsForZones } from './variants.js';
 import { notifyFolderCompleted, notifyFolderFailed } from './notify.js';
 import { publish } from '../lib/realtime.js';
 
@@ -539,17 +539,45 @@ export const processSigningSession = async (
         return variantAt(png, index);
       };
 
+      const single = {
+        signature: await varied(signaturePng, 'signature'),
+        mention: await varied(mentionPng, 'mention'),
+        signature_stamp: await varied(combinedPng, 'signature_stamp'),
+        date: await varied(datePng, 'date'),
+        quote_date: await varied(quoteDatePng, 'quote_date'),
+        free_text: await varied(freeTextPng, 'free_text'),
+        checkbox: await varied(checkboxPng, 'checkbox'),
+      };
+      // A document asking for the same handwritten mark in several zones gets
+      // a different variant in each — see variantsForZones.
+      const raw = {
+        signature: signaturePng,
+        mention: mentionPng,
+        signature_stamp: combinedPng,
+        date: datePng,
+        quote_date: quoteDatePng,
+        free_text: freeTextPng,
+        checkbox: checkboxPng,
+      };
+      const zoneCount = (t: ZoneType) => zones.filter((z) => z.type === t).length;
+      const variantsByType: Partial<Record<ZoneType, Uint8Array[]>> = {};
+      for (const mark of Object.keys(single) as Array<keyof typeof single>) {
+        const list = await variantsForZones(raw[mark], mark, zoneCount(mark), variantIndex, single[mark]);
+        if (list) variantsByType[mark] = list;
+      }
+
       const { bytes, placed } = await generateSignedPdf({
         pdfBytes: original,
         zones,
-        signaturePng: await varied(signaturePng, 'signature'),
+        signaturePng: single.signature,
         stampPng,
-        mentionPng: await varied(mentionPng, 'mention'),
-        combinedPng: await varied(combinedPng, 'signature_stamp'),
-        datePng: await varied(datePng, 'date'),
-        quoteDatePng: await varied(quoteDatePng, 'quote_date'),
-        freeTextPng: await varied(freeTextPng, 'free_text'),
-        checkboxPng: await varied(checkboxPng, 'checkbox'),
+        mentionPng: single.mention,
+        combinedPng: single.signature_stamp,
+        datePng: single.date,
+        quoteDatePng: single.quote_date,
+        freeTextPng: single.free_text,
+        checkboxPng: single.checkbox,
+        variantsByType,
               fit: { fill: env.MARK_FILL, maxHeightOverflow: env.MARK_MAX_OVERFLOW },
         // Size, position and tilt for THIS signing. Applied at placement, where
         // nothing normalises it away — see variantPlacement.

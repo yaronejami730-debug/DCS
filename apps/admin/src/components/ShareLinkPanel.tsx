@@ -368,7 +368,6 @@ export const ShareLinkPanel = ({
           </span>
           <Button
             className="ml-auto"
-            disabled={documents.length === 0}
             onClick={() => {
               setPicked([]);
               setOpen(true);
@@ -386,10 +385,12 @@ export const ShareLinkPanel = ({
           <p className="px-5 py-6 text-sm text-red-700">
             {listError instanceof ApiRequestError ? listError.message : 'Liens indisponibles.'}
           </p>
-        ) : documents.length === 0 ? (
+        ) : documents.length === 0 && links.length === 0 ? (
           <p className="px-5 py-6 text-sm text-ink-600">
-            Aucune feuille de signature dans ce dossier. Importez un PDF avec « Importer des PDF »
-            en haut de la page, puis choisissez « un lien de signature ».
+            Aucune feuille de signature dans ce dossier. Vous pouvez quand même créer un lien
+            vide : le signataire n’aura rien à imprimer, il photographiera la feuille qu’il a en
+            main et vous la renverra. Pour lui envoyer une feuille, importez un PDF avec
+            « Importer des PDF » puis « un lien de signature ».
           </p>
         ) : (
           <>
@@ -404,6 +405,11 @@ export const ShareLinkPanel = ({
               <p className="text-xs font-bold uppercase tracking-wide text-ink-400">
                 Feuilles de signature
               </p>
+              {documents.length === 0 && (
+                <p className="mt-1.5 text-sm text-ink-400">
+                  Aucune : les liens de ce dossier servent seulement à recevoir des photos.
+                </p>
+              )}
               <ul className="mt-2 flex flex-col gap-1.5">
                 {documents.map((doc) => (
                   <li key={doc.id} className="flex items-center gap-2.5 text-sm">
@@ -436,17 +442,27 @@ export const ShareLinkPanel = ({
 
       <Modal open={open} title="Créer un lien de signature" onClose={() => setOpen(false)}>
         <div className="space-y-4">
-          <p className="text-sm text-ink-600">
-            Le porteur du lien pourra imprimer ces feuilles, les signer à la main et vous les
-            renvoyer photographiées. Il ne verra aucun des documents à faire signer du dossier.
-          </p>
+          {documents.length === 0 ? (
+            <p className="rounded-lg bg-brand-50 p-3 text-sm text-brand-800 ring-1 ring-brand-200">
+              Lien vide : rien à imprimer. Le porteur du lien ouvre la page, photographie la feuille
+              signée qu’il a en main et vous l’envoie. Vous récupérez ensuite les signatures dans
+              « Retours ».
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-ink-600">
+                Le porteur du lien pourra imprimer ces feuilles, les signer à la main et vous les
+                renvoyer photographiées. Il ne verra aucun des documents à faire signer du dossier.
+              </p>
 
-          <div>
-            <span className="mb-1.5 block text-sm font-medium text-ink-800">
-              Feuilles envoyées au signataire
-            </span>
-            <DocumentPicker documents={documents} selected={picked} onChange={setPicked} />
-          </div>
+              <div>
+                <span className="mb-1.5 block text-sm font-medium text-ink-800">
+                  Feuilles envoyées au signataire
+                </span>
+                <DocumentPicker documents={documents} selected={picked} onChange={setPicked} />
+              </div>
+            </>
+          )}
 
           <Field
             label="Pour qui ? (facultatif)"
@@ -504,11 +520,7 @@ export const ShareLinkPanel = ({
             <Button variant="secondary" onClick={() => setOpen(false)}>
               Annuler
             </Button>
-            <Button
-              loading={create.isPending}
-              disabled={documents.length === 0}
-              onClick={submit}
-            >
+            <Button loading={create.isPending} onClick={submit}>
               Créer le lien
             </Button>
           </div>

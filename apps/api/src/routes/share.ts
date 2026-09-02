@@ -149,22 +149,14 @@ shareRoutes.post('/:id/share-links', async (c) => {
   if (!parsed.success) throw badRequest('Paramètres de lien invalides.');
 
   /**
-   * A link with no capture sheet sends the technician to a page with nothing to
-   * print. Counted on `for_signing` specifically: a folder full of contracts
-   * and no signature sheet is exactly the case this catches, and counting all
-   * documents would let it through.
+   * A link may carry no sheet at all.
+   *
+   * That is the "photograph and send" link: the technician was handed the
+   * paper in person, or already has it, and the link is only the channel the
+   * photo comes back through. The landing page reads an empty document list
+   * and shows the camera step alone. So no minimum here — the folder may be
+   * empty when the link is minted.
    */
-  const { count } = await db
-    .from('documents')
-    .select('id', { count: 'exact', head: true })
-    .eq('folder_id', folder.id)
-    .eq('role', 'for_signing');
-  if (!count) {
-    throw badRequest(
-      'Importez d’abord la feuille que le signataire devra signer.',
-      'UPLOAD_FAILED',
-    );
-  }
 
   const { data, error } = await db
     .from('folder_share_links')

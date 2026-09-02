@@ -10,6 +10,7 @@ export interface TemplateRow {
   filename_pattern: string | null;
   page_count: number | null;
   reusable: boolean;
+  sheet_field?: string | null;
 }
 
 export interface ZoneRow {
@@ -22,6 +23,7 @@ export interface ZoneRow {
   width: number;
   height: number;
   zone_index: number;
+  sheet_field?: string | null;
 }
 
 export const zoneRowToModel = (row: ZoneRow): TemplateZone => ({
@@ -31,6 +33,7 @@ export const zoneRowToModel = (row: ZoneRow): TemplateZone => ({
   type: row.type,
   rect: { x: row.x, y: row.y, width: row.width, height: row.height },
   index: row.zone_index,
+  sheetField: row.sheet_field ?? null,
 });
 
 export const zoneRowToRect = (row: ZoneRow): NormalizedRect => ({
@@ -102,7 +105,7 @@ export const findTemplateForDocument = async (params: {
 export const loadTemplateZones = async (templateId: string): Promise<ZoneRow[]> => {
   const { data } = await db
     .from('template_zones')
-    .select('id, template_id, page, type, x, y, width, height, zone_index')
+    .select('id, template_id, page, type, x, y, width, height, zone_index, sheet_field')
     .eq('template_id', templateId)
     .order('page', { ascending: true })
     .order('zone_index', { ascending: true })

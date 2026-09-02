@@ -1,3 +1,4 @@
+import { HANDWRITTEN_MARKS, type ZoneType } from '@scansign/shared';
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
 import { env } from '../env.js';
@@ -362,6 +363,39 @@ export const generateVariants = async (
 
 /** Kept for callers that just want a spread to preview. */
 export const previewVariants = generateVariants;
+
+/**
+ * Variant index for the `ordinal`-th zone of a mark on a document whose own
+ * variant is `documentIndex`.
+ *
+ * The first zone keeps the document's variant — the one the operator saw and
+ * approved. Later zones on the same document get indices from a range no
+ * document index ever reaches, so two zones of one contract, and the zones of
+ * two contracts, all differ. Deterministic, so a re-stamp reproduces it.
+ */
+export const zoneVariantIndex = (documentIndex: number, ordinal: number): number =>
+  ordinal <= 0 ? documentIndex : 1000 + documentIndex * 32 + ordinal;
+
+/**
+ * One image per zone of a handwritten mark on this document — the base variant
+ * first, a fresh one for every further zone. Undefined when a single zone (or
+ * none) asks for the mark, or when variants are off: nothing to vary.
+ */
+export const variantsForZones = async (
+  png: Uint8Array | null | undefined,
+  mark: ZoneType,
+  zoneCount: number,
+  documentIndex: number | null,
+  first: Uint8Array | null | undefined,
+): Promise<Uint8Array[] | undefined> => {
+  if (!png || !first || zoneCount <= 1 || documentIndex === null) return undefined;
+  if (!env.SIGNATURE_VARIANTS || !HANDWRITTEN_MARKS.includes(mark)) return undefined;
+  const out: Uint8Array[] = [first];
+  for (let k = 1; k < zoneCount; k++) {
+    out.push(await variantAt(png, zoneVariantIndex(documentIndex, k)));
+  }
+  return out;
+};
 
 /**
  * Fallback when the signer assigned nothing: give each document in the folder

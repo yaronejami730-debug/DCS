@@ -115,6 +115,8 @@ export const templateZoneSchema = z.object({
   type: z.enum(ZONE_TYPE),
   rect: normalizedRectSchema,
   index: z.number().int().min(0).default(0),
+  /** Which capture-sheet box fills this zone; see captureSheet.ts. */
+  sheetField: z.string().max(64).nullable().optional(),
 });
 export type TemplateZoneInput = z.infer<typeof templateZoneSchema>;
 
@@ -129,6 +131,8 @@ export const saveTemplateSchema = z.object({
   documentHash: z.string().length(64).nullable().optional(),
   filenamePattern: z.string().max(160).nullable().optional(),
   pageCount: z.number().int().min(1).nullable().optional(),
+  /** Which capture-sheet box signs this template; see captureSheet.ts. */
+  sheetField: z.string().max(64).nullable().optional(),
   zones: z.array(templateZoneSchema).max(64),
 });
 export type SaveTemplateInput = z.infer<typeof saveTemplateSchema>;
@@ -182,7 +186,13 @@ export interface DocumentPlacement {
   documentId: string;
   /** `document` once an operator has adjusted it; `template` until then. */
   source: 'document' | 'template';
-  zones: Array<{ page: number; type: ZoneType; rect: NormalizedRect; index: number }>;
+  zones: Array<{
+    page: number;
+    type: ZoneType;
+    rect: NormalizedRect;
+    index: number;
+    sheetField?: string | null;
+  }>;
   /** Null when the document can be adjusted; otherwise why it cannot. */
   blockedReason: string | null;
 }
@@ -283,13 +293,14 @@ export type StartSessionInput = z.infer<typeof startSessionSchema>;
  *             third party, so it exists only as a preview an operator asks for
  *             deliberately, to compare the two on the same crop.
  */
-export const EXTRACTION_ENGINE = ['rembg', 'local', 'removebg'] as const;
+export const EXTRACTION_ENGINE = ['rembg', 'local', 'removebg', 'builtin'] as const;
 export type ExtractionEngine = (typeof EXTRACTION_ENGINE)[number];
 
 export const EXTRACTION_ENGINE_LABEL: Record<ExtractionEngine, string> = {
   rembg: 'rembg (local)',
   local: 'Moteur simple',
   removebg: 'remove.bg',
+  builtin: 'Intégré (encre sur papier)',
 };
 
 export const previewCutoutSchema = z.object({

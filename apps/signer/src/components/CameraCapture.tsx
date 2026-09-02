@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from './ui';
+import { QualityChips } from './QualityChips';
+import { assessVideoFrame, type PhotoQuality } from '../lib/quality';
 
 /**
  * The viewfinder.
@@ -111,16 +113,25 @@ export const CameraCapture = ({
   onError,
   busy = false,
   shutterLabel = 'Prendre la photo',
+  expectSheet = false,
 }: {
   onCapture: (result: CaptureResult) => void;
   onError: (message: string) => void;
   busy?: boolean;
   shutterLabel?: string;
+  /** Show the "feuille reconnue" sensor — when the printed capture sheet is what is being photographed. */
+  expectSheet?: boolean;
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [live, setLive] = useState(false);
+  /**
+   * The sensors, read off the live frame a few times a second: sharp, lit,
+   * sheet in frame. Guidance before the shutter, when it can still change
+   * something — a photo judged after the fact is a photo to retake.
+   */
+  const [quality, setQuality] = useState<PhotoQuality | null>(null);
   const [starting, setStarting] = useState(cameraSupported());
   const [notice, setNotice] = useState<string | null>(
     cameraSupported()
@@ -174,6 +185,30 @@ export const CameraCapture = ({
     };
   }, []);
 
+  useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = () => {
+      if (cancelled) return;
+      const video = videoRef.current;
+      if (video && video.readyState >= 2) {
+        try {
+          setQuality(assessVideoFrame(video));
+        } catch {
+          /* a frame we could not read; try again on the next tick */
+        }
+      }
+      // Slow enough not to fight the preview for CPU on an older phone.
+      timer = setTimeout(tick, 650);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [live]);
+
   const shoot = async () => {
     const video = videoRef.current;
     if (!video || !live) return;
@@ -210,7 +245,18 @@ export const CameraCapture = ({
           </div>
         )}
         {live && (
-          <div className="pointer-events-none absolute inset-x-[8%] inset-y-[10%] rounded-xl border-2 border-dashed border-white/60" />
+          <div
+            className={`pointer-events-none absolute inset-x-[8%] inset-y-[10%] rounded-xl border-2 border-dashed ${
+              quality?.sheet ? 'border-emerald-400' : 'border-white/60'
+            }`}
+          />
+        )}
+        {live && (
+          <QualityChips
+            quality={quality}
+            expectSheet={expectSheet}
+            className="pointer-events-none absolute inset-x-3 bottom-3"
+          />
         )}
       </div>
 

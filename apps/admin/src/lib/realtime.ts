@@ -95,7 +95,20 @@ export const connectRealtime = (
   return () => {
     closed = true;
     clearTimers();
-    socket?.close();
+    const current = socket;
     socket = null;
+    if (!current) return;
+    // Closing a socket that is still connecting makes the browser log an error
+    // — which React's StrictMode provokes on every mount in development, since
+    // it runs this cleanup before the handshake can finish. Let it open, then
+    // close it silently.
+    if (current.readyState === WebSocket.CONNECTING) {
+      current.onmessage = null;
+      current.onclose = null;
+      current.onerror = null;
+      current.onopen = () => current.close();
+    } else {
+      current.close();
+    }
   };
 };

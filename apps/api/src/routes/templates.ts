@@ -37,6 +37,7 @@ const toModel = (row: FullTemplateRow, zones: ZoneRow[]): Template => ({
   pageCount: row.page_count,
   sourcePdfPath: row.source_pdf_path,
   sourceFilename: row.source_filename,
+  sheetField: row.sheet_field ?? null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   zones: zones.map(zoneRowToModel),
@@ -61,6 +62,7 @@ const replaceZones = async (
     type: ZoneType;
     rect: { x: number; y: number; width: number; height: number };
     index: number;
+    sheetField?: string | null;
   }>,
 ): Promise<void> => {
   await db.from('template_zones').delete().eq('template_id', templateId);
@@ -75,6 +77,7 @@ const replaceZones = async (
       width: z.rect.width,
       height: z.rect.height,
       zone_index: z.index,
+      sheet_field: z.sheetField ?? null,
     })),
   );
   if (error) throw badRequest(`Zones invalides: ${error.message}`, 'TEMPLATE_ZONE_OUT_OF_RANGE');
@@ -119,6 +122,11 @@ templateRoutes.post('/upload', async (c) => {
 
   const name = typeof body['name'] === 'string' ? body['name'].trim() : '';
   if (!name) throw badRequest('Donnez un nom à ce template.');
+  // Which capture-sheet box signs it, when the operator said so up front.
+  const sheetField =
+    typeof body['sheetField'] === 'string' && body['sheetField'].trim()
+      ? body['sheetField'].trim().slice(0, 64)
+      : null;
 
   const file = body['file'] ?? body['files'];
   if (!(typeof file === 'object' && file !== null && 'arrayBuffer' in file)) {
@@ -144,6 +152,7 @@ templateRoutes.post('/upload', async (c) => {
       page_count: info.pageCount,
       source_filename: upload.name,
       reusable: true,
+      sheet_field: sheetField,
     })
     .select('*')
     .single<FullTemplateRow>();
@@ -313,6 +322,7 @@ templateRoutes.post('/', async (c) => {
       filename_pattern: parsed.data.filenamePattern ?? null,
       page_count: parsed.data.pageCount ?? null,
       reusable: parsed.data.reusable,
+      sheet_field: parsed.data.sheetField ?? null,
     })
     .select('*')
     .single<FullTemplateRow>();
@@ -343,6 +353,7 @@ templateRoutes.put('/:id', async (c) => {
       filename_pattern: parsed.data.filenamePattern ?? null,
       page_count: parsed.data.pageCount ?? null,
       reusable: parsed.data.reusable,
+      sheet_field: parsed.data.sheetField ?? null,
     })
     .eq('id', existing.id)
     .select('*')

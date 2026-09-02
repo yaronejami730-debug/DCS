@@ -1,4 +1,4 @@
-import type { NormalizedRect, PdfRect, PixelRect } from '@scansign/shared';
+import type { ZoneType, NormalizedRect, PdfRect, PixelRect } from '@scansign/shared';
 
 /**
  * Coordinate conversions between the three spaces described in
@@ -166,9 +166,49 @@ export interface MarkFitOptions {
    * old strict contain behaviour.
    */
   maxHeightOverflow?: number;
+  /**
+   * Real-world bounds for the mark, in PDF points, applied after the zone fit.
+   * Null disables them; undefined lets the caller pick the mark type's default.
+   */
+  natural?: NaturalMarkSize | null;
 }
 
-export const DEFAULT_MARK_FIT: Required<MarkFitOptions> = {
+/**
+ * What a mark looks like on paper, in PDF points (1 mm = 2.835 pt).
+ *
+ * The zone an operator draws says WHERE a mark goes; it is a poor statement of
+ * how big it should be. A signature box drawn generously across a contract's
+ * footer made the signature fill it — a hand-span wide — and a thin dotted line
+ * made it a smudge. A signature has a size of its own, and so does a stamp or
+ * a handwritten "lu et approuvé": these are those sizes. The mark is scaled into
+ * the zone as before, then capped to `maxWidth` × `maxHeight` and raised to
+ * `minHeight`, and stays centred where the zone put it.
+ */
+export interface NaturalMarkSize {
+  maxWidth: number;
+  maxHeight: number;
+  minHeight: number;
+}
+
+const mm = (v: number) => v * 2.835;
+
+export const MARK_NATURAL_SIZE: Record<ZoneType, NaturalMarkSize> = {
+  // A pen signature: 4–6 cm wide, about 2 cm tall.
+  signature: { maxWidth: mm(60), maxHeight: mm(22), minHeight: mm(9) },
+  // A company stamp: a 4–5 cm die.
+  stamp: { maxWidth: mm(48), maxHeight: mm(40), minHeight: mm(18) },
+  // A signature written across the stamp.
+  signature_stamp: { maxWidth: mm(55), maxHeight: mm(42), minHeight: mm(20) },
+  // "Lu et approuvé, bon pour accord" in a normal hand: one or two lines.
+  mention: { maxWidth: mm(75), maxHeight: mm(14), minHeight: mm(5) },
+  date: { maxWidth: mm(35), maxHeight: mm(9), minHeight: mm(4) },
+  quote_date: { maxWidth: mm(35), maxHeight: mm(9), minHeight: mm(4) },
+  // A name and title, one line.
+  free_text: { maxWidth: mm(75), maxHeight: mm(10), minHeight: mm(4) },
+  checkbox: { maxWidth: mm(6), maxHeight: mm(6), minHeight: mm(3) },
+};
+
+export const DEFAULT_MARK_FIT: Required<Omit<MarkFitOptions, 'natural'>> = {
   /**
    * Fill the drawn width completely. Insetting it "so the mark does not touch
    * the edges" was tried and dropped: the box IS the operator's statement of
@@ -197,7 +237,17 @@ export const fitMarkInZone = (
   const byWidth = (box.width * fill) / sourceWidth;
   // …but never so tall that the mark climbs out of its line into the text.
   const byHeight = (box.height * maxHeightOverflow) / sourceHeight;
-  const scale = Math.min(byWidth, byHeight);
+  let scale = Math.min(byWidth, byHeight);
+
+  // Then the mark's own size: never a hand-span wide because the box was
+  // generous, never a smudge because the box was a thin line.
+  const natural = options.natural;
+  if (natural) {
+    const maxScale = Math.min(natural.maxWidth / sourceWidth, natural.maxHeight / sourceHeight);
+    const minScale = natural.minHeight / sourceHeight;
+    if (scale > maxScale) scale = maxScale;
+    if (scale < minScale) scale = Math.min(minScale, maxScale);
+  }
 
   const width = sourceWidth * scale;
   const height = sourceHeight * scale;

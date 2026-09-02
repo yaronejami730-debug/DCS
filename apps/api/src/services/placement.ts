@@ -12,7 +12,7 @@ import { downloadObject, uploadObject } from '../lib/storage.js';
 import { audit } from '../lib/audit.js';
 import { publish } from '../lib/realtime.js';
 import { loadTemplateZones, zoneRowToRect } from './templates.js';
-import { variantAt, variantPlacement } from './variants.js';
+import { variantAt, variantPlacement, variantsForZones } from './variants.js';
 
 /**
  * Move or resize the marks on ONE already-signed document.
@@ -35,6 +35,8 @@ export interface DocumentZone {
   type: ZoneType;
   rect: NormalizedRect;
   index: number;
+  /** Capture-sheet box this zone is filled from, when the template said. */
+  sheetField?: string | null;
 }
 
 interface DocumentRow {
@@ -75,7 +77,7 @@ export const zonesForDocument = async (doc: {
 }): Promise<{ zones: DocumentZone[]; source: 'document' | 'template' }> => {
   const { data: overrides } = await db
     .from('document_zones')
-    .select('page, type, x, y, width, height, zone_index')
+    .select('page, type, x, y, width, height, zone_index, sheet_field')
     .eq('document_id', doc.id)
     .order('page', { ascending: true })
     .order('zone_index', { ascending: true })
@@ -88,6 +90,7 @@ export const zonesForDocument = async (doc: {
         width: number;
         height: number;
         zone_index: number;
+        sheet_field?: string | null;
       }>
     >();
 
@@ -99,6 +102,7 @@ export const zonesForDocument = async (doc: {
         type: row.type,
         rect: { x: row.x, y: row.y, width: row.width, height: row.height },
         index: row.zone_index,
+        sheetField: row.sheet_field ?? null,
       })),
     };
   }
@@ -113,6 +117,7 @@ export const zonesForDocument = async (doc: {
       type: row.type,
       rect: zoneRowToRect(row),
       index: row.zone_index,
+      sheetField: row.sheet_field ?? null,
     })),
   };
 };
@@ -283,7 +288,23 @@ export const adjustDocumentPlacement = async (params: {
     stampPng: cutouts.stamp ?? null,
     mentionPng: await varied('mention'),
     combinedPng: await varied('signature_stamp'),
-      fit: { fill: env.MARK_FILL, maxHeightOverflow: env.MARK_MAX_OVERFLOW },
+    // Same per-zone variants as the original signing, so moving a mark on a
+    // document with two signature zones does not redraw either of them.
+    variantsByType: await (async () => {
+      const out: Partial<Record<ZoneType, Uint8Array[]>> = {};
+      for (const mark of ['signature', 'mention', 'signature_stamp'] as const) {
+        const list = await variantsForZones(
+          cutouts[mark],
+          mark,
+          zones.filter((z) => z.type === mark).length,
+          doc.variant_index,
+          await varied(mark),
+        );
+        if (list) out[mark] = list;
+      }
+      return out;
+    })(),
+    fit: { fill: env.MARK_FILL, maxHeightOverflow: env.MARK_MAX_OVERFLOW },
     // Reproduce the same placement variation the original signing used, so
     // repositioning a mark moves it without also resizing or straightening it.
     variation:
@@ -312,6 +333,7 @@ export const adjustDocumentPlacement = async (params: {
         width: zone.rect.width,
         height: zone.rect.height,
         zone_index: zone.index,
+        sheet_field: zone.sheetField ?? null,
       })),
     );
   }

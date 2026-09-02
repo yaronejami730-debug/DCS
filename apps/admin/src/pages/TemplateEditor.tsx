@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
+  ATTESTATION_SHEET_V1,
   ZONE_TYPE,
   ZONE_TYPE_LABEL,
+  sheetFieldTargetsDocument,
   type Document,
   type SaveTemplateInput,
   type ZoneType,
@@ -19,7 +21,8 @@ import {
 import { Page } from '../components/Layout';
 import { PdfViewer } from '../components/PdfViewer';
 import { ZoneEditor, type EditorZone } from '../components/ZoneEditor';
-import { Button, Card, Field, Spinner } from '../components/ui';
+import { Button, Card, Field, Select, Spinner } from '../components/ui';
+import { zoneLabel } from '../lib/zoneLabel';
 
 const newKey = () => Math.random().toString(36).slice(2, 10);
 
@@ -48,6 +51,8 @@ export const TemplateEditorPage = () => {
   const [zones, setZones] = useState<EditorZone[]>([]);
   const [pageCount, setPageCount] = useState(1);
   const [drawing, setDrawing] = useState<ZoneType | null>(null);
+  /** The sheet box the zone being drawn is filled from, when a box button started it. */
+  const [drawingSheet, setDrawingSheet] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingPdf, setLoadingPdf] = useState(true);
@@ -56,6 +61,13 @@ export const TemplateEditorPage = () => {
   // the template library. Reusable is opt-in, and it is what makes the next
   // upload of the same file match automatically.
   const [reusable, setReusable] = useState(!documentId);
+  /**
+   * Which box of the capture sheet signs this template. '' = decided by the
+   * keywords in the name, which is right for a template called "Devis".
+   */
+  const [sheetField, setSheetField] = useState('');
+  /** The rarer zone types, folded away so the sheet's own marks lead. */
+  const [showOtherTypes, setShowOtherTypes] = useState(false);
 
   /** Only meaningful once the template exists server-side. */
   const download = async () => {
@@ -129,9 +141,11 @@ export const TemplateEditorPage = () => {
           page: z.page,
           type: z.type,
           rect: z.rect,
+          sheetField: z.sheetField ?? null,
         })),
       );
       setReusable(template.reusable);
+      setSheetField(template.sheetField ?? '');
     } else if (isNew && sourceDocument && name === '') {
       setName(sourceDocument.filename.replace(/\.pdf$/i, ''));
     }
@@ -142,9 +156,11 @@ export const TemplateEditorPage = () => {
 
   const addZone = (rect: EditorZone['rect'], type: ZoneType, page: number) => {
     const key = newKey();
-    setZones((prev) => [...prev, { key, page, type, rect }]);
+    const sheetField = type === 'signature' ? drawingSheet : null;
+    setZones((prev) => [...prev, { key, page, type, rect, sheetField }]);
     setSelectedKey(key);
     setDrawing(null);
+    setDrawingSheet(null);
   };
 
   const updateZone = (key: string, rect: EditorZone['rect']) =>
@@ -178,11 +194,18 @@ export const TemplateEditorPage = () => {
       name,
       documentHash: sourceDocument?.documentHash ?? template?.documentHash ?? null,
       filenamePattern: filenamePattern.trim() || null,
+      sheetField: sheetField || null,
       pageCount: sourceDocument?.pageCount ?? template?.pageCount ?? pageCount,
       zones: zones
         .slice()
         .sort((a, b) => a.page - b.page)
-        .map((zone, index) => ({ page: zone.page, type: zone.type, rect: zone.rect, index })),
+        .map((zone, index) => ({
+          page: zone.page,
+          type: zone.type,
+          rect: zone.rect,
+          index,
+          sheetField: zone.sheetField ?? null,
+        })),
     };
 
     save.mutate(
@@ -240,26 +263,163 @@ export const TemplateEditorPage = () => {
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div>
-          <div className="sticky top-0 z-10 mb-3 flex flex-wrap items-center gap-2 bg-ink-50/95 py-2 backdrop-blur">
-            {ZONE_TYPE.map((type) => (
-              <Button
-                key={type}
-                variant={drawing === type ? 'primary' : 'secondary'}
-                onClick={() => setDrawing(drawing === type ? null : type)}
-              >
-                + {ZONE_TYPE_LABEL[type]}
-              </Button>
-            ))}
-            {drawing ? (
-              <span className="text-xs text-ink-400">
-                Tracez un rectangle sur la page voulue.
-              </span>
-            ) : (
-              <span className="text-xs text-ink-400">
-                {pageCount} page{pageCount > 1 ? 's' : ''} · faites défiler pour toutes les voir
-              </span>
-            )}
-          </div>
+          {(() => {
+            /**
+             * The toolbar speaks the sheet's language.
+             *
+             * The marks a template receives are the boxes of the capture sheet:
+             * one signature (from the box its name, or its explicit choice,
+             * designates), the mention, the manager's name, the quote date. Those
+             * come first, named as on the sheet. The other zone types still
+             * exist — a stamp, a plain date — behind « Autres zones ».
+             */
+            const signatureBoxes = ATTESTATION_SHEET_V1.fields.filter((f) => f.type === 'signature');
+            const chosenBox =
+              signatureBoxes.find((f) => f.id === sheetField) ??
+              signatureBoxes.find((f) => sheetFieldTargetsDocument(f, [name]));
+            const sheetButtons: Array<{ type: ZoneType; label: string }> = ATTESTATION_SHEET_V1.fields
+              .filter((f) => f.type !== 'signature')
+              .map((f) => ({ type: f.type, label: f.shortLabel }));
+            const sheetTypes = new Set<ZoneType>(['signature', ...sheetButtons.map((b) => b.type)]);
+            const otherTypes = ZONE_TYPE.filter((t) => !sheetTypes.has(t));
+            const startSignature = (fieldId: string) => {
+              if (drawing === 'signature' && drawingSheet === fieldId) {
+                setDrawing(null);
+                setDrawingSheet(null);
+              } else {
+                setDrawing('signature');
+                setDrawingSheet(fieldId);
+              }
+            };
+            return (
+              <div className="sticky top-0 z-10 mb-3 bg-ink-50/95 py-2 backdrop-blur">
+                {/*
+                  One button per signature box of the sheet: "Signature repère 2"
+                  draws a zone filled from that box. Pressed again for the same box,
+                  the next zone is a variant of that signature — said in the
+                  button's own label once a first zone exists.
+                */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {signatureBoxes.map((box, i) => {
+                    const existing = zones.filter(
+                      (z) => z.type === 'signature' && z.sheetField === box.id,
+                    ).length;
+                    const active = drawing === 'signature' && drawingSheet === box.id;
+                    // Two buttons per box: the signature itself, then its
+                    // variants. The base is placed once; a variant needs the
+                    // base to exist, since it is a variant OF it.
+                    return (
+                      <span key={box.id} className="inline-flex gap-1">
+                        <Button
+                          variant={active && existing === 0 ? 'primary' : 'secondary'}
+                          disabled={existing > 0}
+                          onClick={() => startSignature(box.id)}
+                          title={existing > 0 ? `${box.label} — déjà placée` : box.label}
+                        >
+                          + Signature repère {i + 1}
+                        </Button>
+                        <Button
+                          variant={active && existing > 0 ? 'primary' : 'secondary'}
+                          disabled={existing === 0}
+                          onClick={() => startSignature(box.id)}
+                          title={
+                            existing === 0
+                              ? `Placez d’abord « Signature repère ${i + 1} »`
+                              : `Variante ${existing + 1} de la signature ${box.label}`
+                          }
+                        >
+                          + Variante signature repère {i + 1}
+                        </Button>
+                      </span>
+                    );
+                  })}
+                  {sheetButtons.map(({ type, label }) => (
+                    <Button
+                      key={type}
+                      variant={drawing === type ? 'primary' : 'secondary'}
+                      onClick={() => {
+                        setDrawingSheet(null);
+                        setDrawing(drawing === type ? null : type);
+                      }}
+                    >
+                      + {label}
+                    </Button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setShowOtherTypes((v) => !v)}
+                    className="text-xs font-medium text-ink-500 hover:underline"
+                  >
+                    {showOtherTypes ? 'Masquer les autres zones' : 'Autres zones…'}
+                  </button>
+                  {showOtherTypes &&
+                    [...otherTypes, 'signature' as ZoneType].map((type) => (
+                      <Button
+                        key={type}
+                        variant={drawing === type && !drawingSheet ? 'primary' : 'secondary'}
+                        onClick={() => {
+                          setDrawingSheet(null);
+                          setDrawing(drawing === type && !drawingSheet ? null : type);
+                        }}
+                      >
+                        + {type === 'signature' ? 'Signature (sans repère)' : ZONE_TYPE_LABEL[type]}
+                      </Button>
+                    ))}
+                </div>
+                <p className="mt-1.5 text-xs text-ink-400">
+                  {drawing ? (
+                    drawing === 'signature' &&
+                    drawingSheet &&
+                    zones.some((z) => z.type === 'signature' && z.sheetField === drawingSheet)
+                      ? 'Tracez la zone : cette signature supplémentaire recevra une variante différente de la même signature.'
+                      : 'Tracez un rectangle sur la page voulue.'
+                  ) : chosenBox ? (
+                    <>
+                      Signature reprise de la case <b className="text-ink-600">{chosenBox.label}</b>
+                      {sheetField ? ' (choisie à droite)' : ' (d’après le nom du template)'} ·{' '}
+                      {pageCount} page{pageCount > 1 ? 's' : ''}
+                    </>
+                  ) : (
+                    <span className="text-amber-700">
+                      Aucune case de la feuille ne correspond au nom « {name || '…'} » : choisissez-la
+                      à droite pour que la signature arrive ici.
+                    </span>
+                  )}
+                </p>
+                {(() => {
+                  /**
+                   * The zone decides which box fills it — so a "Signature repère 2"
+                   * drawn on a template whose name says "Devis" WILL receive the
+                   * AH's signature. Legal, occasionally intended, usually a slip:
+                   * say it, in orange, without blocking.
+                   */
+                  const expected = signatureBoxes.find((f) => sheetFieldTargetsDocument(f, [name]));
+                  const strays = zones.filter(
+                    (z) =>
+                      z.type === 'signature' &&
+                      z.sheetField &&
+                      expected &&
+                      z.sheetField !== expected.id,
+                  );
+                  if (!expected || strays.length === 0) return null;
+                  const labels = Array.from(
+                    new Set(
+                      strays.map((z) => signatureBoxes.find((f) => f.id === z.sheetField)?.label ?? z.sheetField),
+                    ),
+                  );
+                  return (
+                    <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                      Attention : d’après son nom, ce template relève de la case{' '}
+                      <b>{expected.label}</b>, mais {strays.length > 1 ? 'des zones' : 'une zone'} de
+                      signature {strays.length > 1 ? 'visent' : 'vise'} {labels.join(' et ')}. La zone
+                      l’emporte : elle recevra cette signature-là. Retracez-la avec le bon bouton si
+                      ce n’est pas voulu.
+                    </p>
+                  );
+                })()}
+              </div>
+            );
+          })()}
 
           {pdfUrl ? (
             <PdfViewer
@@ -305,6 +465,36 @@ export const TemplateEditorPage = () => {
               placeholder="contrat-vente-*.pdf"
               hint="Facultatif. Utilisé seulement si l’empreinte du fichier ne correspond à rien."
             />
+            {(() => {
+              const signatureBoxes = ATTESTATION_SHEET_V1.fields.filter(
+                (f) => f.type === 'signature',
+              );
+              const guessed = signatureBoxes.find((f) => sheetFieldTargetsDocument(f, [name]));
+              return (
+                <div>
+                  <Select
+                    label="Case de signature sur la feuille"
+                    value={sheetField}
+                    onChange={(e) => setSheetField(e.target.value)}
+                  >
+                    <option value="">
+                      {guessed
+                        ? `Automatique — d’après le nom : ${guessed.label}`
+                        : 'Automatique — d’après le nom du template'}
+                    </option>
+                    {signatureBoxes.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </Select>
+                  <p className="mt-1 text-xs text-ink-400">
+                    Sur l’attestation simplifiée, chaque case de signature vise un groupe de
+                    documents. Dites ici laquelle signe ce template si son nom ne le dit pas.
+                  </p>
+                </div>
+              );
+            })()}
             <label className="flex cursor-pointer items-start gap-2.5">
               <input
                 type="checkbox"
@@ -365,7 +555,7 @@ export const TemplateEditorPage = () => {
                         }}
                       >
                         <p className="text-sm font-medium">
-                          {ZONE_TYPE_LABEL[zone.type]} · page {zone.page}
+                          {zoneLabel(zone, zones)} · page {zone.page}
                         </p>
                         <p className="text-xs tabular-nums text-ink-400">
                           x {zone.rect.x.toFixed(3)} · y {zone.rect.y.toFixed(3)} ·{' '}

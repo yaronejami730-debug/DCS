@@ -134,7 +134,7 @@ const envSchema = z.object({
   REMBG_MATTING_ERODE: int(12),
   REMBG_TIMEOUT_MS: int(120_000),
 
-  EXTRACTION_ENGINE: z.enum(['rembg', 'removebg', 'local']).default('rembg'),
+  EXTRACTION_ENGINE: z.enum(['rembg', 'removebg', 'local', 'builtin']).default('rembg'),
   /**
    * Use the other engine when the chosen one cannot answer at all — no key, no
    * credits, service down. Without this a lapsed subscription stops signing

@@ -3,6 +3,7 @@ import { SignatureRemoveBgProvider } from './signature-remove-bg.js';
 import { RemoveBgProvider } from './remove-bg.js';
 import { RembgProvider } from './rembg.js';
 import { FallbackExtractionProvider } from './fallback.js';
+import { BuiltinInkProvider } from './builtin.js';
 import type { ImageExtractionProvider } from './provider.js';
 
 export * from './provider.js';
@@ -10,6 +11,7 @@ export { SignatureRemoveBgProvider } from './signature-remove-bg.js';
 export { RemoveBgProvider } from './remove-bg.js';
 export { RembgProvider } from './rembg.js';
 export { FallbackExtractionProvider } from './fallback.js';
+export { BuiltinInkProvider } from './builtin.js';
 
 /**
  * Which engine to cut a mark out with.
@@ -19,11 +21,14 @@ export { FallbackExtractionProvider } from './fallback.js';
  *             engine kept. Metered, and the photograph leaves this machine.
  *   local     signature-remove-bg, in a container on our own server. Free, and
  *             nothing is uploaded anywhere.
+ *   builtin   ink thresholding inside this process. No service, no model; made
+ *             for paper and ink, which is what the capture sheet delivers.
  *
- * Whichever is chosen, the other stands behind it: see FallbackExtractionProvider
- * for exactly which failures fall through and which do not.
+ * Whichever is chosen, `builtin` stands behind it — it is the one engine that
+ * cannot be down, and it needs neither Docker nor a subscription. See
+ * FallbackExtractionProvider for exactly which failures fall through.
  */
-export const EXTRACTION_ENGINES = ['rembg', 'local', 'removebg'] as const;
+export const EXTRACTION_ENGINES = ['rembg', 'local', 'removebg', 'builtin'] as const;
 export type ExtractionEngine = (typeof EXTRACTION_ENGINES)[number];
 
 const singletons = new Map<ExtractionEngine, ImageExtractionProvider>();
@@ -38,7 +43,9 @@ const bare = (engine: ExtractionEngine): ImageExtractionProvider => {
         ? new RemoveBgProvider()
         : engine === 'rembg'
           ? new RembgProvider()
-          : new SignatureRemoveBgProvider();
+          : engine === 'builtin'
+            ? new BuiltinInkProvider()
+            : new SignatureRemoveBgProvider();
     singletons.set(engine, provider);
   }
   return provider;
@@ -53,14 +60,15 @@ export const createExtractionProvider = (
   engine: ExtractionEngine = env.EXTRACTION_ENGINE,
 ): ImageExtractionProvider => {
   if (override) return override;
-  if (!env.EXTRACTION_FALLBACK) return bare(engine);
+  if (!env.EXTRACTION_FALLBACK || engine === 'builtin') return bare(engine);
 
   let provider = composed.get(engine);
   if (!provider) {
-    // Fall back to the on-premises engine that costs nothing: a metered API is
-    // the wrong thing to reach for when the chosen engine is merely down.
-    const other: ExtractionEngine = engine === 'local' ? 'rembg' : 'local';
-    provider = new FallbackExtractionProvider(bare(engine), bare(other));
+    // Fall back to the engine that is always there and costs nothing. The
+    // containers used to be the fallback, but a fallback that needs Docker is
+    // no fallback on a machine without it — which is how a clean scan refused
+    // by remove.bg ended as "moteur de détourage injoignable".
+    provider = new FallbackExtractionProvider(bare(engine), bare('builtin'));
     composed.set(engine, provider);
   }
   return provider;

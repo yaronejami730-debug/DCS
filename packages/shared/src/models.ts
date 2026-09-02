@@ -138,7 +138,7 @@ export interface Document {
    * to reposition the mark: there is no way to know which signature to reuse.
    */
   signingSessionId?: string | null;
-  template?: Pick<Template, 'id' | 'name'> | null;
+  template?: Pick<Template, 'id' | 'name' | 'sheetField'> | null;
 }
 
 export interface TemplateZone {
@@ -151,6 +151,11 @@ export interface TemplateZone {
   rect: NormalizedRect;
   /** Draw order / label suffix, e.g. "Signature 2". */
   index: number;
+  /**
+   * The capture-sheet box this zone is filled from (a field id of
+   * ATTESTATION_SHEET_V1, e.g. "signature_2"). Null = decided by the template.
+   */
+  sheetField?: string | null;
 }
 
 export interface Template {
@@ -166,6 +171,12 @@ export interface Template {
   pageCount: number | null;
   /** Storage path of the PDF this template was configured against. */
   sourcePdfPath: string | null;
+  /**
+   * Which box of the capture sheet signs this template — a field id of
+   * `ATTESTATION_SHEET_V1`, e.g. "signature_1". Null = decided by keywords in
+   * the template's name. See captureSheet.ts.
+   */
+  sheetField: string | null;
   sourceFilename: string | null;
   createdAt: string;
   updatedAt: string;
