@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, ApiRequestError } from '../lib/api';
 import {
   useCreateFolder,
+  useImportClients,
   useQhareWebhook,
   type ClientSuggestion,
   type ClientSearchResult,
@@ -42,6 +43,23 @@ export const ClientSearch = ({
   /** The Qhare set-up card, and the account's webhook URL once it is asked for. */
   const [showSetup, setShowSetup] = useState(false);
   const webhook = useQhareWebhook(showSetup);
+  const importClients = useImportClients();
+  const csvInput = useRef<HTMLInputElement>(null);
+  const [imported, setImported] = useState<string | null>(null);
+  const onCsv = (file: File | undefined) => {
+    if (!file) return;
+    setImported(null);
+    importClients.mutate(file, {
+      onSuccess: (r) => {
+        setImported(
+          `${r.imported} client${r.imported > 1 ? 's' : ''} importé${r.imported > 1 ? 's' : ''} sur ${r.rows} ligne${r.rows > 1 ? 's' : ''}` +
+            (r.skipped.length ? ` · ${r.skipped.length} ligne(s) sans nom ou sans identifiant ignorée(s)` : ''),
+        );
+        setQuery((q) => q); // re-run the search with the new mirror
+      },
+      onError: (e) => setError(e instanceof ApiRequestError ? e.message : 'Import impossible.'),
+    });
+  };
   const box = useRef<HTMLDivElement>(null);
 
   // Debounced search: the CRM answers in hundreds of milliseconds, the operator
@@ -145,15 +163,50 @@ export const ClientSearch = ({
       {showList && (
         <div className="absolute z-30 mt-1.5 w-full overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-ink-200">
           {/* Clients from the CRM */}
-          <div className="border-b border-ink-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-400">
+          <div className="flex items-center border-b border-ink-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-400">
             Clients Qhare
             {searching && <span className="ml-2 font-normal normal-case tracking-normal">recherche…</span>}
+            <span className="ml-auto flex items-center gap-3 font-medium normal-case tracking-normal">
+              <button
+                type="button"
+                className="underline"
+                disabled={importClients.isPending}
+                onClick={() => csvInput.current?.click()}
+              >
+                {importClients.isPending ? 'Import…' : 'Importer un export CSV'}
+              </button>
+              <button type="button" className="underline" onClick={() => setShowSetup((v) => !v)}>
+                Webhook
+              </button>
+            </span>
+            <input
+              ref={csvInput}
+              type="file"
+              accept=".csv,text/csv"
+              hidden
+              onChange={(e) => {
+                onCsv(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
           </div>
+          {imported && <p className="px-3 py-2 text-xs text-emerald-800">{imported}</p>}
+          {showSetup && result?.crm.configured && (
+            <div className="border-b border-ink-100 px-3 py-2.5 text-xs text-ink-700">
+              <p className="font-semibold">Webhook Qhare (création et modification de lead, modèle Lead) :</p>
+              {webhook.data ? (
+                <code className="mt-1 block select-all break-all rounded bg-ink-100 px-1 py-0.5">{webhook.data.url}</code>
+              ) : (
+                <span className="text-ink-400">génération…</span>
+              )}
+            </div>
+          )}
           {result && !result.crm.configured ? (
             <div className="px-3 py-2.5 text-xs text-amber-800">
-              Aucun client Qhare reçu pour l’instant.{' '}
+              Aucun client Qhare pour l’instant. Importez l’export CSV de vos leads Qhare (bouton
+              ci-dessus) pour les retrouver ici, puis le webhook tient la liste à jour.{' '}
               <button type="button" className="underline" onClick={() => setShowSetup((v) => !v)}>
-                Connecter Qhare
+                Voir le webhook
               </button>
               {showSetup && (
                 <div className="mt-2 rounded-lg bg-white p-2.5 text-ink-700 ring-1 ring-amber-200">

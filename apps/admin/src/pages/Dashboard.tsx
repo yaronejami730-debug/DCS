@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FOLDER_STATUS_LABEL, type Folder, type FolderStatus } from '@scansign/shared';
-import { useDashboard, useDashboardInsights, useFolders } from '../lib/queries';
+import { useDashboard, useDashboardInsights, useDeleteFolder, useFolders } from '../lib/queries';
+import { ConfirmDelete } from '../components/ConfirmDelete';
 import { Page } from '../components/Layout';
-import { Card, FolderStatusPill, Spinner, folderReference, formatDate, timeAgo } from '../components/ui';
+import { Button, Card, FolderStatusPill, Spinner, folderReference, formatDate, timeAgo } from '../components/ui';
 import { ClientSearch } from '../components/ClientSearch';
 import { matchesSearch } from '../lib/search';
 
@@ -68,12 +69,23 @@ const FolderList = ({
   folders,
   empty,
   open,
+  selected,
+  onToggle,
+  onToggleAll,
+  onDeleteSelected,
 }: {
   title: string;
   folders: Folder[];
   empty: string;
   open: boolean;
-}) => (
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+  onToggleAll: (ids: string[], on: boolean) => void;
+  onDeleteSelected: () => void;
+}) => {
+  const ids = folders.map((f) => f.id);
+  const pickedHere = ids.filter((id) => selected.has(id)).length;
+  return (
   <Card>
     <details open={open} className="group">
       <summary className="flex cursor-pointer select-none items-center gap-3 border-b border-ink-200/70 px-5 py-3 [&::-webkit-details-marker]:hidden">
@@ -82,6 +94,26 @@ const FolderList = ({
         <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-600">
           {folders.length}
         </span>
+        {/* Selection controls live in the header so they stay visible above a
+            long list. Clicks here must not fold the list: stopPropagation. */}
+        {folders.length > 0 && (
+          <span className="ml-auto flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-500">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 rounded border-ink-300 accent-brand-600"
+                checked={pickedHere === ids.length}
+                onChange={(e) => onToggleAll(ids, e.target.checked)}
+              />
+              Tout sélectionner
+            </label>
+            {pickedHere > 0 && (
+              <Button variant="danger" onClick={onDeleteSelected}>
+                Supprimer ({selected.size})
+              </Button>
+            )}
+          </span>
+        )}
       </summary>
       {folders.length === 0 ? (
         <p className="px-5 py-8 text-center text-sm text-ink-400">{empty}</p>
@@ -91,10 +123,17 @@ const FolderList = ({
             const docs = (folder.documents ?? []).filter((d) => d.role !== 'for_signing');
             const signed = docs.filter((d) => d.status === 'completed').length;
             return (
-              <li key={folder.id}>
+              <li key={folder.id} className="flex items-center gap-3 pl-5 hover:bg-ink-50">
+                <input
+                  type="checkbox"
+                  aria-label={`Sélectionner ${folder.name}`}
+                  className="h-4 w-4 shrink-0 rounded border-ink-300 accent-brand-600"
+                  checked={selected.has(folder.id)}
+                  onChange={() => onToggle(folder.id)}
+                />
                 <Link
                   to={`/folders/${folder.id}`}
-                  className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-ink-50"
+                  className="flex min-w-0 flex-1 items-center justify-between gap-3 py-3 pr-5"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{folder.name}</p>
@@ -113,7 +152,8 @@ const FolderList = ({
       )}
     </details>
   </Card>
-);
+  );
+};
 
 export const DashboardPage = () => {
   const { data: stats, isLoading } = useDashboard();
@@ -123,6 +163,37 @@ export const DashboardPage = () => {
   const [query, setQuery] = useState('');
   const all = (folders?.items ?? []).filter((f) => matchesSearch(f, query));
   const waiting = all.filter((f) => f.status !== 'completed');
+
+  /** Folders ticked for deletion, across both lists. */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirming, setConfirming] = useState(false);
+  const remove = useDeleteFolder();
+  const [deleting, setDeleting] = useState(false);
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleAll = (ids: string[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) if (on) next.add(id); else next.delete(id);
+      return next;
+    });
+  const deleteSelected = async () => {
+    setDeleting(true);
+    try {
+      // One call per folder: the API deletes the row, its documents, links,
+      // returns and the files behind them. Sequential so a failure stops the run.
+      for (const id of selected) await remove.mutateAsync(id);
+      setSelected(new Set());
+      setConfirming(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
   const maxPerDay = Math.max(1, ...(insights?.signedPerDay.map((d) => d.count) ?? [1]));
   const totalFolders = STATUS_ORDER.reduce((n, s) => n + (insights?.foldersByStatus[s] ?? 0), 0);
 
@@ -246,14 +317,32 @@ export const DashboardPage = () => {
           folders={waiting}
           empty={query ? `Rien en attente pour « ${query} ».` : 'Rien en attente : tout est signé.'}
           open
+          selected={selected}
+          onToggle={toggle}
+          onToggleAll={toggleAll}
+          onDeleteSelected={() => setConfirming(true)}
         />
         <FolderList
           title="Tous les dossiers"
           folders={all}
           empty={query ? `Aucun dossier pour « ${query} ».` : 'Aucun dossier pour l’instant.'}
           open={Boolean(query)}
+          selected={selected}
+          onToggle={toggle}
+          onToggleAll={toggleAll}
+          onDeleteSelected={() => setConfirming(true)}
         />
       </div>
+
+      <ConfirmDelete
+        open={confirming}
+        title={selected.size > 1 ? `Supprimer ${selected.size} dossiers` : 'Supprimer ce dossier'}
+        what={selected.size > 1 ? `ces ${selected.size} dossiers` : 'ce dossier'}
+        count={selected.size}
+        busy={deleting}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => void deleteSelected()}
+      />
     </Page>
   );
 };

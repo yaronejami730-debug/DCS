@@ -3,7 +3,7 @@ import { createFolderSchema, importDocumentsSchema, type DocumentStatus } from '
 import { db } from '../lib/supabase.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { requireAuth, type AppBindings } from '../lib/auth.js';
-import { signedUrl } from '../lib/storage.js';
+import { signedUrl, removeObjects } from '../lib/storage.js';
 import { audit } from '../lib/audit.js';
 import { zonesForDocument } from '../services/placement.js';
 import {
@@ -206,14 +206,58 @@ folderRoutes.post('/:id/documents', async (c) => {
   return c.json(toFolder(refreshed), 201);
 });
 
+/**
+ * Delete a folder and everything under it.
+ *
+ * The database side cascades (documents, links, returns, sessions); the files
+ * do not — storage has no foreign keys. So every path is collected first, the
+ * row is deleted, and the files are removed afterwards, best effort: a file
+ * that fails to delete leaves an orphan in the bucket, never a folder that
+ * refuses to die.
+ */
 folderRoutes.delete('/:id', async (c) => {
   const user = c.get('user');
-  const { error } = await db
-    .from('folders')
-    .delete()
-    .eq('id', c.req.param('id'))
-    .eq('owner_id', user.id);
+  const folderId = c.req.param('id');
+
+  const [docs, returns, sessions] = await Promise.all([
+    db
+      .from('documents')
+      .select('storage_path, final_pdf_path')
+      .eq('folder_id', folderId)
+      .eq('owner_id', user.id)
+      .returns<Array<{ storage_path: string | null; final_pdf_path: string | null }>>(),
+    db
+      .from('share_link_returns')
+      .select('storage_path')
+      .eq('folder_id', folderId)
+      .eq('owner_id', user.id)
+      .returns<Array<{ storage_path: string | null }>>(),
+    db
+      .from('signing_sessions')
+      .select('*')
+      .eq('folder_id', folderId)
+      .eq('owner_id', user.id)
+      .returns<Array<Record<string, unknown>>>(),
+  ]);
+  const paths = new Set<string>();
+  for (const d of docs.data ?? []) for (const p of [d.storage_path, d.final_pdf_path]) if (p) paths.add(p);
+  for (const r of returns.data ?? []) if (r.storage_path) paths.add(r.storage_path);
+  for (const s of sessions.data ?? []) {
+    for (const [k, v] of Object.entries(s)) {
+      if ((k.endsWith('_path') || k === 'photo_path') && typeof v === 'string' && v) paths.add(v);
+    }
+  }
+
+  const { error } = await db.from('folders').delete().eq('id', folderId).eq('owner_id', user.id);
   if (error) throw badRequest(error.message);
-  publish(user.id, { type: 'folder.deleted', folderId: c.req.param('id') });
-  return c.json({ ok: true });
+
+  if (paths.size > 0) {
+    try {
+      await removeObjects([...paths]);
+    } catch (e) {
+      console.warn('[folders] storage cleanup incomplete for %s: %s', folderId, e);
+    }
+  }
+  publish(user.id, { type: 'folder.deleted', folderId });
+  return c.json({ ok: true, files: paths.size });
 });

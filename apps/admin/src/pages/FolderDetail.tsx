@@ -1,16 +1,18 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { Document } from '@scansign/shared';
 import {
   downloadFinalPdf,
   finalPdfUrl,
   useAssignTemplate,
   useDeleteDocument,
+  useDeleteFolder,
   useFolder,
   useTemplates,
 } from '../lib/queries';
 import { api, ApiRequestError } from '../lib/api';
 import { buildZip, downloadBlob, safeFilename } from '../lib/zip';
+import { ConfirmDelete } from '../components/ConfirmDelete';
 import { Page } from '../components/Layout';
 import { ShareLinkPanel } from '../components/ShareLinkPanel';
 import { PhoneHandoff } from '../components/PhoneHandoff';
@@ -40,6 +42,9 @@ export const FolderDetailPage = () => {
   const { data: templates } = useTemplates();
   const removeDocument = useDeleteDocument();
   const [zipping, setZipping] = useState(false);
+  const navigate = useNavigate();
+  const removeFolder = useDeleteFolder();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   /**
    * Every signed PDF of the selection — or of the folder, with nothing ticked —
@@ -446,6 +451,38 @@ export const FolderDetailPage = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Bottom of the page, red, on purpose: the one thing here that cannot
+          be undone sits apart from everything that can. */}
+      <Card className="mt-8 border border-red-200 p-5">
+        <p className="text-xs font-bold uppercase tracking-wide text-red-600">Zone de danger</p>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-ink-600">
+            Supprimer ce dossier efface définitivement ses documents, PDF signés, liens de
+            signature et retours de la base de données.
+          </p>
+          <Button variant="danger" onClick={() => setConfirmingDelete(true)}>
+            Supprimer ce dossier
+          </Button>
+        </div>
+      </Card>
+
+      <ConfirmDelete
+        open={confirmingDelete}
+        title="Supprimer ce dossier"
+        what={`le dossier « ${folder.name} »`}
+        busy={removeFolder.isPending}
+        onCancel={() => setConfirmingDelete(false)}
+        onConfirm={() =>
+          removeFolder.mutate(folder.id, {
+            onSuccess: () => navigate('/folders'),
+            onError: (e) => {
+              setConfirmingDelete(false);
+              setError(e instanceof ApiRequestError ? e.message : 'Suppression impossible.');
+            },
+          })
+        }
+      />
     </Page>
   );
 };

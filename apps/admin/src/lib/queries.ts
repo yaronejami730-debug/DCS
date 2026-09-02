@@ -123,6 +123,22 @@ export interface ClientSearchResult {
   crm: { name: string; configured: boolean; leads: number; error: string | null };
 }
 
+/** One-time backfill of the CRM mirror from a CSV export. */
+export const useImportClients = () => {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append('file', file);
+      return api<{ rows: number; imported: number; skipped: number[]; columns: string[] }>(
+        '/clients/import',
+        { method: 'POST', form },
+      );
+    },
+    onSuccess: () => invalidate('folders'),
+  });
+};
+
 /** The URL Qhare must call: shown once in the console, pasted once in Qhare. */
 export const useQhareWebhook = (enabled: boolean) =>
   useQuery({

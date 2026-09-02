@@ -19,6 +19,8 @@ export interface CrmLeadRow {
   postal_code: string | null;
   category: string | null;
   state: string | null;
+  reference: string | null;
+  address: string | null;
   updated_at: string;
 }
 
@@ -39,10 +41,13 @@ const first = (o: Record<string, unknown>, keys: string[]): string | null => {
 /**
  * Read a lead out of a webhook body, whatever its envelope.
  *
- * Qhare's field names follow its API (nom, prenom, telephone, email, ville,
- * code_postal, categorie, etat, raison_sociale…); the lead may sit at the top
- * level or under `lead` / `data`. Returns null when no id or no name can be
- * found — a body we cannot file is logged, not invented.
+ * Qhare's webhook, as observed on a real delivery, is flat and uses: id, nom,
+ * prenom, civilite, tel, email, adresse, code_postal, ville, departement,
+ * categorie, etat, sous_etat, numdossier, raison_sociale (BtoB client),
+ * nom_societe (the Qhare tenant — NOT the client), affectation, commentaires…
+ * The person's name leads; the company is kept alongside. Returns null when
+ * no id or no name can be found — a body we cannot file is logged, not
+ * invented.
  */
 export const leadFromWebhook = (
   body: unknown,
@@ -55,12 +60,21 @@ export const leadFromWebhook = (
       o = { ...o, ...(inner as Record<string, unknown>) };
     }
   }
-  const externalId = first(o, ['id', 'lead_id', 'leadId', 'uuid', 'reference']);
-  const firstName = first(o, ['prenom', 'prénom', 'firstName', 'first_name']);
-  const lastName = first(o, ['nom', 'lastName', 'last_name', 'name']);
-  const company = first(o, ['raison_sociale', 'company', 'societe', 'société']);
-  const name = company ?? [firstName, lastName].filter(Boolean).join(' ');
+  // Qhare's CSV export names its columns in plain French ("N°", "Raison
+  // sociale", "Téléphone fixe", "Sous Etat"…); the webhook uses API names.
+  // Both are listed, lower-cased as the CSV reader hands them over.
+  const externalId =
+    first(o, ['id', 'n°', 'lead_id', 'leadId', 'uuid', 'identifiant', 'id lead', 'lead']) ??
+    first(o, ['numdossier', 'numéro de dossier', 'numero de dossier', 'n° dossier']);
+  const firstName = first(o, ['prenom', 'prénom', 'firstName', 'first_name', 'prénom client']);
+  const lastName = first(o, ['nom', 'lastName', 'last_name', 'nom client', 'nom du client']);
+  const company = first(o, ['raison_sociale', 'raison sociale', 'company']);
+  const person = [firstName, lastName].filter(Boolean).join(' ');
+  const name = person || company || first(o, ['name']);
   if (!externalId || !name) return null;
+  const state = [first(o, ['etat', 'état', 'state']), first(o, ['sous_etat', 'sous etat', 'sous état'])]
+    .filter(Boolean)
+    .join(' · ');
   return {
     externalId,
     fields: {
@@ -68,12 +82,15 @@ export const leadFromWebhook = (
       first_name: firstName,
       last_name: lastName,
       company,
-      phone: first(o, ['telephone', 'téléphone', 'phone', 'mobile', 'telephone_fixe']),
+      phone: first(o, ['tel', 'telephone', 'téléphone', 'phone', 'mobile', 'portable', 'telephone_fixe', 'téléphone fixe']),
       email: first(o, ['email', 'mail']),
       city: first(o, ['ville', 'city']),
-      postal_code: first(o, ['code_postal', 'postal_code', 'zip', 'departement']),
+      postal_code: first(o, ['code_postal', 'code postal', 'cp', 'postal_code', 'zip', 'departement', 'département']),
       category: first(o, ['categorie', 'catégorie', 'category']),
-      state: first(o, ['etat', 'état', 'state', 'statut']),
+      // (état / sous-état handled above)
+      state: state || null,
+      reference: first(o, ['numdossier', 'numéro de dossier', 'numero de dossier', 'n° dossier', 'numero_dossier', 'dossier mpr', 'reference', 'ref']),
+      address: first(o, ['adresse', 'address']),
     },
   };
 };
@@ -104,12 +121,28 @@ export const searchLeads = async (ownerId: string, query: string, limit = 8): Pr
   if (words.length === 0) return [];
   let q = db
     .from('crm_leads')
-    .select('id, external_id, name, first_name, last_name, company, phone, email, city, postal_code, category, state, updated_at')
+    .select(
+      'id, external_id, name, first_name, last_name, company, phone, email, city, postal_code, category, state, reference, address, updated_at',
+    )
     .eq('owner_id', ownerId);
   for (const w of words) {
     const like = `%${w.replace(/[%_,()]/g, '')}%`;
     q = q.or(
-      `name.ilike.${like},phone.ilike.${like},email.ilike.${like},city.ilike.${like},postal_code.ilike.${like},external_id.ilike.${like}`,
+      [
+        'name',
+        'first_name',
+        'last_name',
+        'company',
+        'phone',
+        'email',
+        'city',
+        'postal_code',
+        'address',
+        'reference',
+        'external_id',
+      ]
+        .map((col) => `${col}.ilike.${like}`)
+        .join(','),
     );
   }
   const { data } = await q.order('updated_at', { ascending: false }).limit(limit).returns<CrmLeadRow[]>();
