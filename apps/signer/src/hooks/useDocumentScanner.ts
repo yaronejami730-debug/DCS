@@ -37,7 +37,20 @@ import { StabilityTracker } from './useScannerStability';
  */
 
 /** Width of the detection copy. Enough for edges, cheap enough for a phone. */
-const DETECT_WIDTH = 480;
+const DETECT_WIDTH = 540;
+/**
+ * Detector dropouts tolerated before the page is declared gone.
+ *
+ * The classical detector misses an occasional frame — a glint, a shadow
+ * crossing an edge — while the page has not moved. Treating each miss as
+ * "no document" made the contour blink and reset the stability clock. Up to
+ * this many consecutive misses, the last corners stand in.
+ */
+const MAX_MISSES = 3;
+/** Weight of the newest corners in the moving average shown and judged. */
+const SMOOTHING = 0.45;
+/** A jump larger than this (normalized) is a new position, not noise: snap. */
+const SNAP_DISTANCE = 0.12;
 /** Long edge of the captured frame. Matches the rest of the app's uploads. */
 const CAPTURE_MAX_EDGE = 2400;
 /** Pause between two detections, on top of the detection itself. */
@@ -104,6 +117,9 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
   const busy = useRef(false);
   const tick = useRef(0);
   const lastQuality = useRef<ScannerStatus | null>(null);
+  /** Smoothed corners of the last frames, and how many frames in a row had none. */
+  const smoothed = useRef<Corners | null>(null);
+  const misses = useRef(0);
   /** The verdict the UI last saw — and the one the shutter trusts. */
   const latest = useRef<ScannerVerdict>(IDLE_VERDICT);
 
@@ -156,8 +172,40 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
 
       const scanner = (scannerRef.current ??= new Scanner());
       const result = await scanner.scan(canvas, { mode: 'detect', maxProcessingDimension: DETECT_WIDTH });
-      const corners: Corners | null =
+      const raw: Corners | null =
         result.success && result.corners ? scaleCorners(result.corners, 1 / w, 1 / h) : null;
+
+      // Smooth, and bridge short dropouts, before judging anything.
+      let corners: Corners | null;
+      if (raw) {
+        misses.current = 0;
+        const prev = smoothed.current;
+        if (prev && maxCornerDisplacement(prev, raw) < SNAP_DISTANCE) {
+          const mix = (a: number, b: number) => a + (b - a) * SMOOTHING;
+          corners = {
+            topLeft: { x: mix(prev.topLeft.x, raw.topLeft.x), y: mix(prev.topLeft.y, raw.topLeft.y) },
+            topRight: { x: mix(prev.topRight.x, raw.topRight.x), y: mix(prev.topRight.y, raw.topRight.y) },
+            bottomRight: {
+              x: mix(prev.bottomRight.x, raw.bottomRight.x),
+              y: mix(prev.bottomRight.y, raw.bottomRight.y),
+            },
+            bottomLeft: {
+              x: mix(prev.bottomLeft.x, raw.bottomLeft.x),
+              y: mix(prev.bottomLeft.y, raw.bottomLeft.y),
+            },
+          };
+        } else {
+          corners = raw;
+        }
+        smoothed.current = corners;
+      } else if (smoothed.current && misses.current < MAX_MISSES) {
+        misses.current += 1;
+        corners = smoothed.current;
+      } else {
+        misses.current += 1;
+        smoothed.current = null;
+        corners = null;
+      }
 
       const framing = validateDocumentDetection(corners, validation);
 
@@ -195,6 +243,8 @@ export const useDocumentScanner = (options: UseDocumentScannerOptions = {}): Doc
     if (running.current) return;
     running.current = true;
     trackerRef.current.reset();
+    smoothed.current = null;
+    misses.current = 0;
     void step();
   }, [step]);
 

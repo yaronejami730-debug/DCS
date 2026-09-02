@@ -97,6 +97,8 @@ export interface StabilityOptions {
 }
 
 export const DEFAULT_STABILITY: StabilityOptions = {
-  holdMs: 650,
-  maxJitter: 0.02,
+  holdMs: 600,
+  // Measured on a hand-held phone: tremor alone moves smoothed corners by
+  // 1–2 % of the diagonal between frames. 2 % restarted the clock constantly.
+  maxJitter: 0.035,
 };
