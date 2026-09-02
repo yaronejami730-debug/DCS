@@ -7,6 +7,9 @@ import { reportStep, startPresence } from '../lib/activity';
 import { scanToDocument } from '../lib/scanner';
 import { assessPhoto, type PhotoQuality } from '../lib/quality';
 import { QualityChips } from '../components/QualityChips';
+import { DocumentScanner } from '../components/scanner/DocumentScanner';
+import { cameraSupported } from '../hooks/useDocumentScanner';
+import type { ScannedDocument } from '../types/scanner';
 
 /**
  * pdf.js only loads when a document is actually opened — it outweighs the rest
@@ -65,6 +68,23 @@ export const LandingPage = () => {
   const [pending, setPending] = useState<
     Array<{ file: File; url: string | null; quality: PhotoQuality | null; scanned: boolean }>
   >([]);
+  /**
+   * The live scanner, full screen. It frames, straightens and hands back a
+   * page; the page then joins `pending` like a chosen file, sensors included.
+   * Where the browser has no camera to give, the file input takes over.
+   */
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const scanned = async (doc: ScannedDocument) => {
+    setScannerOpen(false);
+    const file = new File([doc.blob], `page-${pending.length + 1}.jpg`, { type: 'image/jpeg' });
+    const quality = await assessPhoto(file).catch(() => null);
+    setPending((prev) => [...prev, { file, url: doc.uri, quality, scanned: true }]);
+    URL.revokeObjectURL(doc.original.uri);
+  };
+  const openCamera = () => {
+    if (cameraSupported()) setScannerOpen(true);
+    else fileInput.current?.click();
+  };
 
   // The console's presence dot: heartbeat while this page is open.
   useEffect(() => {
@@ -319,13 +339,14 @@ export const LandingPage = () => {
         )}
 
         {pending.length === 0 ? (
-          <Button
-            className="mt-3"
-            loading={scanning}
-            onClick={() => fileInput.current?.click()}
-          >
-            {scanning ? 'Analyse des photos…' : 'Photographier les pages signées'}
-          </Button>
+          <div className="mt-3 flex flex-col gap-2">
+            <Button loading={scanning} onClick={openCamera}>
+              {scanning ? 'Analyse des photos…' : 'Scanner la page signée'}
+            </Button>
+            <Button variant="secondary" disabled={scanning} onClick={() => fileInput.current?.click()}>
+              Importer une photo ou un PDF
+            </Button>
+          </div>
         ) : (
           <div className="mt-3 rounded-xl bg-white p-3.5 ring-1 ring-ink-200">
             <p className="text-sm font-semibold text-ink-900">
@@ -374,9 +395,16 @@ export const LandingPage = () => {
                 <Button
                   variant="secondary"
                   disabled={send.isPending || scanning}
+                  onClick={openCamera}
+                >
+                  Scanner une autre page
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={send.isPending || scanning}
                   onClick={() => fileInput.current?.click()}
                 >
-                  Ajouter une page
+                  Importer
                 </Button>
                 <Button variant="secondary" disabled={send.isPending} onClick={discardPending}>
                   Reprendre
@@ -422,6 +450,17 @@ export const LandingPage = () => {
         <p className="mt-5 text-center text-xs text-ink-400">
           Ce lien expire le {new Date(data.expiresAt).toLocaleDateString('fr-FR')}.
         </p>
+      )}
+
+      {scannerOpen && (
+        <DocumentScanner
+          onScanned={(doc) => void scanned(doc)}
+          onClose={() => setScannerOpen(false)}
+          onFallback={() => {
+            setScannerOpen(false);
+            fileInput.current?.click();
+          }}
+        />
       )}
 
       {viewing && (

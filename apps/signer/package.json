@@ -8,7 +8,7 @@
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "echo \"@scansign/signer: covered by tools/smoke.mjs\" && exit 0"
+    "test": "vitest run"
   },
   "dependencies": {
     "@scansign/shared": "workspace:*",
@@ -26,6 +26,7 @@
     "@vitejs/plugin-react": "6.1.1",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
-    "vite": "8.2.2"
+    "vite": "8.2.2",
+    "vitest": "3.2.4"
   }
 }
