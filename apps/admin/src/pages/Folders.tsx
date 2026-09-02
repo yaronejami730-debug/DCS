@@ -2,6 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCreateFolder, useDeleteFolder, useFolders } from '../lib/queries';
 import { ApiRequestError } from '../lib/api';
+import { matchesSearch } from '../lib/search';
+import { SearchBox } from '../components/SearchBox';
 import { Page } from '../components/Layout';
 import {
   Button,
@@ -23,6 +25,8 @@ export const FoldersPage = () => {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const shown = (data?.items ?? []).filter((f) => matchesSearch(f, query));
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -60,9 +64,16 @@ export const FoldersPage = () => {
           />
         </Card>
       ) : (
+        <>
+        <SearchBox value={query} onChange={setQuery} className="mb-4 max-w-xl" autoFocus />
         <Card>
+          {shown.length === 0 && (
+            <p className="px-5 py-8 text-center text-sm text-ink-400">
+              Aucun dossier ne correspond à « {query} ».
+            </p>
+          )}
           <ul className="divide-y divide-ink-200/70">
-            {data!.items.map((folder) => (
+            {shown.map((folder) => (
               <li key={folder.id} className="flex items-center justify-between gap-4 px-5 py-4">
                 <Link to={`/folders/${folder.id}`} className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium hover:text-brand-600">{folder.name}</p>
@@ -88,6 +99,7 @@ export const FoldersPage = () => {
             ))}
           </ul>
         </Card>
+        </>
       )}
 
       <Modal open={creating} title="Nouveau dossier" onClose={() => setCreating(false)}>

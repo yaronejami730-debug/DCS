@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FOLDER_STATUS_LABEL, type Folder, type FolderStatus } from '@scansign/shared';
 import { useDashboard, useDashboardInsights, useFolders } from '../lib/queries';
 import { Page } from '../components/Layout';
 import { Card, FolderStatusPill, Spinner, folderReference, formatDate, timeAgo } from '../components/ui';
+import { SearchBox } from '../components/SearchBox';
+import { matchesSearch } from '../lib/search';
 
 /**
  * The dashboard: what is waiting, what is done, what it costs.
@@ -117,7 +120,8 @@ export const DashboardPage = () => {
   const { data: insights } = useDashboardInsights();
   const { data: folders } = useFolders();
 
-  const all = folders?.items ?? [];
+  const [query, setQuery] = useState('');
+  const all = (folders?.items ?? []).filter((f) => matchesSearch(f, query));
   const waiting = all.filter((f) => f.status !== 'completed');
   const maxPerDay = Math.max(1, ...(insights?.signedPerDay.map((d) => d.count) ?? [1]));
   const totalFolders = STATUS_ORDER.reduce((n, s) => n + (insights?.foldersByStatus[s] ?? 0), 0);
@@ -236,17 +240,18 @@ export const DashboardPage = () => {
       </div>
 
       <div className="mt-6 space-y-4">
+        <SearchBox value={query} onChange={setQuery} className="max-w-xl" />
         <FolderList
           title="Dossiers en attente"
           folders={waiting}
-          empty="Rien en attente : tout est signé."
+          empty={query ? `Rien en attente pour « ${query} ».` : 'Rien en attente : tout est signé.'}
           open
         />
         <FolderList
           title="Tous les dossiers"
           folders={all}
-          empty="Aucun dossier pour l’instant."
-          open={false}
+          empty={query ? `Aucun dossier pour « ${query} ».` : 'Aucun dossier pour l’instant.'}
+          open={Boolean(query)}
         />
       </div>
     </Page>
