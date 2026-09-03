@@ -390,33 +390,51 @@ export const TemplateEditorPage = () => {
                 </p>
                 {(() => {
                   /**
-                   * The zone decides which box fills it — so a "Signature repère 2"
-                   * drawn on a template whose name says "Devis" WILL receive the
-                   * AH's signature. Legal, occasionally intended, usually a slip:
-                   * say it, in orange, without blocking.
+                   * Zones that do not belong on this template, by the sheet's
+                   * own rules: a signature box other than the one the template's
+                   * name designates, or a targeted mark (invoice date…) whose
+                   * box does not aim at this template at all. Legal — the zone
+                   * decides — but almost always a slip, so it is said in orange.
                    */
                   const expected = signatureBoxes.find((f) => sheetFieldTargetsDocument(f, [name]));
-                  const strays = zones.filter(
-                    (z) =>
-                      z.type === 'signature' &&
-                      z.sheetField &&
-                      expected &&
-                      z.sheetField !== expected.id,
+                  const problems: string[] = [];
+                  const straySignatures = zones.filter(
+                    (z) => z.type === 'signature' && z.sheetField && expected && z.sheetField !== expected.id,
                   );
-                  if (!expected || strays.length === 0) return null;
-                  const labels = Array.from(
-                    new Set(
-                      strays.map((z) => signatureBoxes.find((f) => f.id === z.sheetField)?.label ?? z.sheetField),
-                    ),
-                  );
+                  if (expected && straySignatures.length > 0) {
+                    const labels = Array.from(
+                      new Set(
+                        straySignatures.map(
+                          (z) => signatureBoxes.find((f) => f.id === z.sheetField)?.label ?? z.sheetField,
+                        ),
+                      ),
+                    );
+                    problems.push(
+                      `D’après son nom, ce template relève de la case « ${expected.label} », mais ${
+                        straySignatures.length > 1 ? 'des zones' : 'une zone'
+                      } de signature ${straySignatures.length > 1 ? 'visent' : 'vise'} ${labels.join(' et ')}.`,
+                    );
+                  }
+                  for (const field of ATTESTATION_SHEET_V1.fields) {
+                    if (field.type === 'signature' || field.targets.length === 0) continue;
+                    if (!zones.some((z) => z.type === field.type)) continue;
+                    if (name && !sheetFieldTargetsDocument(field, [name])) {
+                      problems.push(
+                        `La case « ${field.label} » de la feuille ne vise pas ce template (elle va aux templates nommés : ${field.targets.join(', ')}). La zone ${ZONE_TYPE_LABEL[field.type]} restera vide à l’apposition.`,
+                      );
+                    }
+                  }
+                  if (problems.length === 0) return null;
                   return (
-                    <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
-                      Attention : d’après son nom, ce template relève de la case{' '}
-                      <b>{expected.label}</b>, mais {strays.length > 1 ? 'des zones' : 'une zone'} de
-                      signature {strays.length > 1 ? 'visent' : 'vise'} {labels.join(' et ')}. La zone
-                      l’emporte : elle recevra cette signature-là. Retracez-la avec le bon bouton si
-                      ce n’est pas voulu.
-                    </p>
+                    <div className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                      <p className="font-semibold">Attention</p>
+                      <ul className="mt-0.5 list-disc space-y-0.5 pl-4">
+                        {problems.map((m) => (
+                          <li key={m}>{m}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-1">La zone l’emporte toujours : retracez-la avec le bon bouton si ce n’est pas voulu.</p>
+                    </div>
                   );
                 })()}
               </div>
