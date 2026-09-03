@@ -114,6 +114,24 @@ describe('sheetFieldsForDocument', () => {
     expect(picked.signature?.id).toBe('signature_3');
   });
 
+  it('routes the invoice date by keyword even when the template chose its signature box', () => {
+    const picked = sheetFieldsForDocument(
+      fields,
+      { filename: 'AH_DE794260903-7_SISAHAYE_JEAN.pdf', templateName: 'AH', sheetField: 'signature_2' },
+      ['signature', 'stamp', 'invoice_date'],
+    );
+    expect(picked.signature?.id).toBe('signature_2');
+    expect(picked.invoice_date?.id).toBe('invoice_date');
+    expect(picked.stamp?.id).toBe('stamp');
+    // …and not to a document outside the AH group.
+    const fin = sheetFieldsForDocument(
+      fields,
+      { filename: 'x.pdf', templateName: "Attestation de fin d'installation", sheetField: 'signature_3' },
+      ['signature', 'invoice_date'],
+    );
+    expect(fin.invoice_date).toBeUndefined();
+  });
+
   it('offers no signature to a document no group names', () => {
     const picked = sheetFieldsForDocument(
       fields,

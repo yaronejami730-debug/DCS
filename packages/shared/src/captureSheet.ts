@@ -308,13 +308,16 @@ export const sheetFieldsForDocument = <F extends Pick<SheetField, 'id' | 'type' 
   const names = [document.templateName, document.filename];
   for (const field of fields) {
     if (!zoneTypes.includes(field.type)) continue;
-    // Untargeted fields go everywhere; an explicit choice on the template is
-    // final; otherwise the most specific keyword match wins, first in layout
-    // order on a tie.
+    // Untargeted fields go everywhere. An explicit choice on the template
+    // names a SIGNATURE box and is final for signature fields only — the
+    // invoice date is not "signature_2" and must not be refused because the
+    // template chose that box. Every other targeted field follows its
+    // keywords; the most specific match wins, first in layout order on a tie.
     let s: number;
     if (field.targets.length === 0) s = 1;
-    else if (document.sheetField) s = document.sheetField === field.id ? Number.MAX_SAFE_INTEGER : 0;
-    else s = sheetFieldTargetScore(field, names);
+    else if (document.sheetField && field.type === 'signature') {
+      s = document.sheetField === field.id ? Number.MAX_SAFE_INTEGER : 0;
+    } else s = sheetFieldTargetScore(field, names);
     if (s > 0 && s > (score[field.type] ?? 0)) {
       out[field.type] = field;
       score[field.type] = s;
