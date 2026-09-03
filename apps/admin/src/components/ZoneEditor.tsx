@@ -35,6 +35,20 @@ const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
  * at 900px wide is the same zone whatever the screen, the zoom or the DPI.
  * The conversion to PDF points happens on the server at generation time.
  */
+/**
+ * Marks that come in one size: a company stamp is a die, ~45 mm across, and
+ * a zone for it is placed with a click, not drawn — nobody should have to
+ * guess how big a stamp is. Normalized against an A4 page (the overwhelming
+ * case); on another format the stamp's own natural-size cap keeps it sane.
+ */
+const A4 = { w: 595.28, h: 841.89 };
+const STAMP_PT = 45 * 2.835;
+const FIXED_SIZE: Partial<Record<ZoneType, { width: number; height: number }>> = {
+  stamp: { width: STAMP_PT / A4.w, height: STAMP_PT / A4.h },
+};
+
+export const isFixedSize = (type: ZoneType): boolean => Boolean(FIXED_SIZE[type]);
+
 export const ZoneEditor = ({
   width,
   height,
@@ -72,6 +86,20 @@ export const ZoneEditor = ({
     }
     event.preventDefault();
     const origin = pointToNormalized(event.clientX, event.clientY);
+    const fixed = FIXED_SIZE[drawing];
+    if (fixed) {
+      // One click: the zone lands centred on the pointer, at its standard size.
+      onDrawn(
+        {
+          x: clamp01(Math.min(Math.max(origin.x - fixed.width / 2, 0), 1 - fixed.width)),
+          y: clamp01(Math.min(Math.max(origin.y - fixed.height / 2, 0), 1 - fixed.height)),
+          width: fixed.width,
+          height: fixed.height,
+        },
+        drawing,
+      );
+      return;
+    }
     const surface = surfaceRef.current!;
     surface.setPointerCapture(event.pointerId);
 
@@ -181,10 +209,12 @@ export const ZoneEditor = ({
             >
               {zoneLabel(zone, zones)}
             </span>
-            <span
-              onPointerDown={(e) => startTransform(e, zone, 'resize')}
-              className="absolute -right-1.5 -bottom-1.5 h-3.5 w-3.5 cursor-nwse-resize rounded-sm bg-white ring-2 ring-ink-800"
-            />
+            {!isFixedSize(zone.type) && (
+              <span
+                onPointerDown={(e) => startTransform(e, zone, 'resize')}
+                className="absolute -right-1.5 -bottom-1.5 h-3.5 w-3.5 cursor-nwse-resize rounded-sm bg-white ring-2 ring-ink-800"
+              />
+            )}
           </div>
         );
       })}
