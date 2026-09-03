@@ -14,6 +14,7 @@ import { sessionRoutes } from './routes/sessions.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { clientRoutes } from './routes/clients.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { uploadRoutes } from './routes/uploads.js';
 import { publicShareRoutes, shareRoutes, shareUploadRoutes } from './routes/share.js';
 import { createExtractionProvider } from './services/extraction/index.js';
 
@@ -54,6 +55,7 @@ export const createApp = () => {
   app.route('/dashboard', dashboardRoutes);
   app.route('/clients', clientRoutes);
   app.route('/webhooks', webhookRoutes);
+  app.route('/uploads', uploadRoutes);
   // Session routes carry their own /folders/:id/... and /signing-sessions/... paths.
   app.route('/', sessionRoutes);
 

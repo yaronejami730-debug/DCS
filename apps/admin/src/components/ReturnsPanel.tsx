@@ -54,9 +54,17 @@ export const ReturnsPanel = ({ folderId }: { folderId: string }) => {
         <ul className="divide-y divide-ink-200/70">
           {[...pending, ...done].map((item) => (
             <li key={item.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
-              <span className="shrink-0 text-lg">
-                {item.contentType === 'application/pdf' ? '📄' : '🖼️'}
-              </span>
+              {/* The page itself, not a picture icon: the operator recognises a
+                  scan by its look before its filename. PDFs keep the icon. */}
+              {item.contentType !== 'application/pdf' && item.url ? (
+                <img
+                  src={item.url}
+                  alt=""
+                  className="h-16 w-12 shrink-0 rounded-md object-cover ring-1 ring-ink-200"
+                />
+              ) : (
+                <span className="flex h-16 w-12 shrink-0 items-center justify-center rounded-md bg-ink-100 text-2xl">📄</span>
+              )}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{item.filename}</p>
                 <p className="mt-0.5 text-xs text-ink-400">
@@ -65,13 +73,16 @@ export const ReturnsPanel = ({ folderId }: { folderId: string }) => {
                 </p>
                 {item.location && (
                   <a
-                    href={`https://www.openstreetmap.org/?mlat=${item.location.latitude}&mlon=${item.location.longitude}#map=17/${item.location.latitude}/${item.location.longitude}`}
+                    href={`https://www.google.com/maps/search/?api=1&query=${item.location.latitude},${item.location.longitude}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
                   >
-                    📍 {item.location.latitude.toFixed(5)}, {item.location.longitude.toFixed(5)}
-                    {item.location.accuracy ? ` · ±${Math.round(item.location.accuracy)} m` : ''}
+                    📍 Voir sur Google Maps
+                    <span className="font-normal text-ink-400">
+                      {' '}· {item.location.latitude.toFixed(5)}, {item.location.longitude.toFixed(5)}
+                      {item.location.accuracy ? ` · ±${Math.round(item.location.accuracy)} m` : ''}
+                    </span>
                   </a>
                 )}
               </div>
@@ -146,9 +157,17 @@ export const ReturnsPanel = ({ folderId }: { folderId: string }) => {
           ))}
         {viewing?.location && (
           <p className="mt-3 text-center text-xs text-ink-500">
-            📍 Signé le {formatDate(viewing.location.at)} à {viewing.location.latitude.toFixed(5)},{' '}
-            {viewing.location.longitude.toFixed(5)}
-            {viewing.location.accuracy ? ` (±${Math.round(viewing.location.accuracy)} m)` : ''}
+            📍 Signé le {formatDate(viewing.location.at)} ·{' '}
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${viewing.location.latitude},${viewing.location.longitude}`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-brand-600 hover:underline"
+            >
+              Voir sur Google Maps
+            </a>{' '}
+            ({viewing.location.latitude.toFixed(5)}, {viewing.location.longitude.toFixed(5)}
+            {viewing.location.accuracy ? `, ±${Math.round(viewing.location.accuracy)} m` : ''})
           </p>
         )}
       </Modal>

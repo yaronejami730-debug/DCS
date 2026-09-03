@@ -182,7 +182,7 @@ export const ATTESTATION_SHEET_V1: CaptureSheetLayout = {
       type: 'invoice_date',
       // The invoice date goes onto the AH (attestation sur l'honneur) and the
       // attestation de fin de travaux (AFT) — the two documents that quote it.
-      targets: ['ah', 'honneur', 'fin', 'aft', 'travaux'],
+      targets: ['ah', 'honneur', 'stockage', 'fin', 'aft', 'travaux'],
       rect: {
         x: MARGIN + NAME_W + ROW3_GAP + DATE_W + ROW3_GAP,
         y: ROW3_TOP,

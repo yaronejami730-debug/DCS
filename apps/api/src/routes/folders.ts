@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { createFolderSchema, importDocumentsSchema, type DocumentStatus } from '@scansign/shared';
 import { db } from '../lib/supabase.js';
+import { takeStagedFile } from './uploads.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { requireAuth, type AppBindings } from '../lib/auth.js';
 import { signedUrl, removeObjects } from '../lib/storage.js';
@@ -183,8 +184,27 @@ folderRoutes.post('/:id/documents', async (c) => {
   const user = c.get('user');
   const folder = await loadFolder(c.req.param('id'), user.id);
 
-  const body = await c.req.parseBody({ all: true });
-  const files = readPdfUploads(body);
+  /**
+   * Two ways in: the files themselves (small), or the paths of files the
+   * browser already put in storage (large — see routes/uploads.ts).
+   */
+  const contentType = c.req.header('content-type') ?? '';
+  let body: Record<string, unknown>;
+  let files: File[];
+  if (contentType.includes('application/json')) {
+    const json = (await c.req.json().catch(() => ({}))) as {
+      role?: string;
+      staged?: Array<{ path: string; filename: string }>;
+    };
+    body = { role: json.role };
+    const staged = Array.isArray(json.staged) ? json.staged : [];
+    if (staged.length === 0) throw badRequest('Aucun fichier reçu.', 'UPLOAD_FAILED');
+    files = [];
+    for (const s of staged) files.push(await takeStagedFile(user.id, String(s.path), String(s.filename)));
+  } else {
+    body = await c.req.parseBody({ all: true });
+    files = readPdfUploads(body);
+  }
   // Asked on every import, and defaulted to the harmless value: a capture sheet
   // filed as a contract merely waits for a template, whereas a contract filed
   // as a capture sheet is silently never signed.

@@ -167,7 +167,7 @@ const envSchema = z.object({
   MARK_FILL: num(1, 0.3, 1),
   MARK_MAX_OVERFLOW: num(1.5, 1, 3),
 
-  MAX_PDF_BYTES: int(26_214_400),
+  MAX_PDF_BYTES: int(104_857_600),
   MAX_IMAGE_BYTES: int(20_971_520),
 
   RETENTION_DELETE_PHOTO_AFTER_SUCCESS: bool(true),

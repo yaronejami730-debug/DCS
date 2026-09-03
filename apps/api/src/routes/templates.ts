@@ -10,6 +10,7 @@ import {
 } from '@scansign/shared';
 import { annotateTemplate, inspectPdf, looksLikePdf, sha256 } from '@scansign/pdf';
 import { db } from '../lib/supabase.js';
+import { takeStagedFile } from './uploads.js';
 import { downloadObject, signedUrl, uploadObject } from '../lib/storage.js';
 import { badRequest, notFound, payloadTooLarge, unsupportedMedia } from '../lib/errors.js';
 import { requireAuth, type AppBindings } from '../lib/auth.js';
@@ -118,7 +119,18 @@ templateRoutes.get('/:id', async (c) => {
  */
 templateRoutes.post('/upload', async (c) => {
   const user = c.get('user');
-  const body = await c.req.parseBody();
+  const contentType = c.req.header('content-type') ?? '';
+  let body: Record<string, unknown>;
+  let stagedFile: File | null = null;
+  if (contentType.includes('application/json')) {
+    const json = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    body = json;
+    if (typeof json['stagedPath'] === 'string') {
+      stagedFile = await takeStagedFile(user.id, json['stagedPath'], String(json['filename'] ?? 'template.pdf'));
+    }
+  } else {
+    body = await c.req.parseBody();
+  }
 
   const name = typeof body['name'] === 'string' ? body['name'].trim() : '';
   if (!name) throw badRequest('Donnez un nom à ce template.');
@@ -128,7 +140,7 @@ templateRoutes.post('/upload', async (c) => {
       ? body['sheetField'].trim().slice(0, 64)
       : null;
 
-  const file = body['file'] ?? body['files'];
+  const file = stagedFile ?? body['file'] ?? body['files'];
   if (!(typeof file === 'object' && file !== null && 'arrayBuffer' in file)) {
     throw badRequest('Ajoutez le PDF que ce template décrit.', 'UPLOAD_FAILED');
   }

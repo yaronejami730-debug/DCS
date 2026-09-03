@@ -21,7 +21,7 @@ import type {
   Template,
   ZoneType,
 } from '@scansign/shared';
-import { api, downloadFile } from './api';
+import { ApiRequestError, api, downloadFile } from './api';
 
 /**
  * Statuses move on the server (a signer submits, a job finishes), so lists
@@ -193,10 +193,31 @@ export const useDeleteDocument = () => {
   });
 };
 
+/**
+ * Above this, a file goes straight to storage rather than through the API:
+ * Vercel refuses request bodies over 4.5 MB, and a 30-page study is more.
+ */
+const DIRECT_UPLOAD_ABOVE = 3.5 * 1024 * 1024;
+
+/** Put one file in storage via a signed URL; returns the staged path the API will consume. */
+export const stageUpload = async (file: File): Promise<{ path: string; filename: string }> => {
+  const { path, signedUrl } = await api<{ path: string; signedUrl: string; token: string }>(
+    '/uploads/sign',
+    { method: 'POST', json: { filename: file.name, size: file.size } },
+  );
+  const res = await fetch(signedUrl, {
+    method: 'PUT',
+    headers: { 'content-type': file.type || 'application/pdf', 'x-upsert': 'true' },
+    body: file,
+  });
+  if (!res.ok) throw new ApiRequestError(res.status, `Téléversement de ${file.name} refusé (${res.status}).`);
+  return { path, filename: file.name };
+};
+
 export const useUploadDocuments = () => {
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       folderId,
       files,
       role = 'to_sign',
@@ -206,8 +227,20 @@ export const useUploadDocuments = () => {
       /** Contract or capture sheet. See DOCUMENT_ROLE. */
       role?: DocumentRole;
     }) => {
+      const big = files.filter((f) => f.size > DIRECT_UPLOAD_ABOVE);
+      const small = files.filter((f) => f.size <= DIRECT_UPLOAD_ABOVE);
+      let folder: Folder | null = null;
+      if (big.length > 0) {
+        const staged = [];
+        for (const file of big) staged.push(await stageUpload(file));
+        folder = await api<Folder>(`/folders/${folderId}/documents`, {
+          method: 'POST',
+          json: { role, staged },
+        });
+      }
+      if (small.length === 0) return folder!;
       const form = new FormData();
-      for (const file of files) form.append('files', file);
+      for (const file of small) form.append('files', file);
       form.append('role', role);
       return api<Folder>(`/folders/${folderId}/documents`, { method: 'POST', form });
     },
@@ -372,6 +405,14 @@ export const useCreateTemplateFromPdf = () => {
       /** Capture-sheet box that signs this template; see captureSheet.ts. */
       sheetField?: string | null;
     }) => {
+      if (file.size > DIRECT_UPLOAD_ABOVE) {
+        return stageUpload(file).then((staged) =>
+          api<Template>('/templates/upload', {
+            method: 'POST',
+            json: { name, sheetField: sheetField ?? null, stagedPath: staged.path, filename: staged.filename },
+          }),
+        );
+      }
       const form = new FormData();
       form.append('name', name);
       form.append('file', file);

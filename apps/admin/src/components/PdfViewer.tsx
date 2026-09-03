@@ -34,9 +34,66 @@ const PdfPage = ({
   children?: (size: RenderedPage) => React.ReactNode;
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const holderRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<RenderedPage | null>(null);
+  /**
+   * Only pages near the viewport are drawn, and a page scrolled far away
+   * gives its pixels back. A 100-page study rendered whole is a hundred
+   * canvases of a few megabytes each — more than a laptop's browser will
+   * keep. The size is known from the page's viewport before any drawing, so
+   * overlays (zones) sit on a placeholder of the right size all the same.
+   */
+  const [near, setNear] = useState(page <= 3);
 
   useEffect(() => {
+    const el = holderRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setNear(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) setNear(e.isIntersecting);
+      },
+      { rootMargin: '1200px 0px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  // Size first: cheap, and enough for the layout and the overlays.
+  useEffect(() => {
+    let cancelled = false;
+    void doc
+      .getPage(page)
+      .then((pdfPage) => {
+        if (cancelled) return;
+        const base = pdfPage.getViewport({ scale: 1 });
+        const scale = Math.min(maxWidth / base.width, 2);
+        const viewport = pdfPage.getViewport({ scale });
+        const rendered = { page, width: viewport.width, height: viewport.height };
+        setSize(rendered);
+        onRendered?.(rendered);
+      })
+      .catch(() => {
+        /* the render effect reports the failure */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, page, maxWidth]);
+
+  // Pixels only while near.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (!near) {
+      // Release the bitmap; the element keeps its CSS size via the holder.
+      canvas.width = 0;
+      canvas.height = 0;
+      return;
+    }
     let cancelled = false;
     let task: { promise: Promise<void>; cancel: () => void } | null = null;
 
@@ -48,8 +105,6 @@ const PdfPage = ({
       const scale = Math.min(maxWidth / base.width, 2);
       const viewport = pdfPage.getViewport({ scale });
 
-      const canvas = canvasRef.current;
-      if (!canvas) return;
       const ratio = window.devicePixelRatio || 1;
       canvas.width = Math.floor(viewport.width * ratio);
       canvas.height = Math.floor(viewport.height * ratio);
@@ -62,11 +117,6 @@ const PdfPage = ({
 
       task = pdfPage.render({ canvas, canvasContext: context, viewport });
       await task.promise;
-      if (cancelled) return;
-
-      const rendered = { page, width: viewport.width, height: viewport.height };
-      setSize(rendered);
-      onRendered?.(rendered);
     };
 
     void run().catch(() => {
@@ -76,14 +126,16 @@ const PdfPage = ({
       cancelled = true;
       task?.cancel();
     };
-    // onRendered is an inline closure at the call site; re-rendering the page on
-    // every parent render would thrash the canvas.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, page, maxWidth]);
+  }, [doc, page, maxWidth, near]);
 
   return (
-    <div className="relative inline-block" data-page={page}>
-      <canvas ref={canvasRef} className="block rounded-lg shadow-sm ring-1 ring-ink-200" />
+    <div
+      ref={holderRef}
+      className="relative inline-block rounded-lg bg-white shadow-sm ring-1 ring-ink-200"
+      data-page={page}
+      style={size ? { width: size.width, height: size.height } : undefined}
+    >
+      <canvas ref={canvasRef} className="block rounded-lg" />
       {size && children?.(size)}
       <span className="pointer-events-none absolute -top-2 left-2 rounded bg-ink-800/80 px-1.5 py-0.5 text-[10px] font-medium text-white">
         Page {page}
