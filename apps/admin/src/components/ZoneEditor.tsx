@@ -36,15 +36,15 @@ const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
  * The conversion to PDF points happens on the server at generation time.
  */
 /**
- * Marks that come in one size: a company stamp is a die, ~45 mm across, and
- * a zone for it is placed with a click, not drawn — nobody should have to
- * guess how big a stamp is. Normalized against an A4 page (the overwhelming
- * case); on another format the stamp's own natural-size cap keeps it sane.
+ * Marks that come in one size: a company stamp is a die, and a zone for it is
+ * placed with a click, not drawn — nobody should have to guess how big a stamp
+ * is. The size is the operator's own measurement of the ideal box on their
+ * documents: 0.185 × 0.059 of an A4 page, i.e. about 39 × 17.5 mm, the
+ * rectangular company stamp. On another format the stamp's natural-size cap
+ * keeps it sane.
  */
-const A4 = { w: 595.28, h: 841.89 };
-const STAMP_PT = 45 * 2.835;
 const FIXED_SIZE: Partial<Record<ZoneType, { width: number; height: number }>> = {
-  stamp: { width: STAMP_PT / A4.w, height: STAMP_PT / A4.h },
+  stamp: { width: 0.185, height: 0.059 },
 };
 
 export const isFixedSize = (type: ZoneType): boolean => Boolean(FIXED_SIZE[type]);

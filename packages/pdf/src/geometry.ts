@@ -196,7 +196,8 @@ export const MARK_NATURAL_SIZE: Record<ZoneType, NaturalMarkSize> = {
   // A pen signature: 4–6 cm wide, about 2 cm tall.
   signature: { maxWidth: mm(60), maxHeight: mm(22), minHeight: mm(9) },
   // A company stamp: a 4–5 cm die.
-  stamp: { maxWidth: mm(48), maxHeight: mm(40), minHeight: mm(18) },
+  // A rectangular company stamp: the standard zone is ~39 × 17.5 mm.
+  stamp: { maxWidth: mm(48), maxHeight: mm(40), minHeight: mm(12) },
   // A signature written across the stamp.
   signature_stamp: { maxWidth: mm(55), maxHeight: mm(42), minHeight: mm(20) },
   // "Lu et approuvé, bon pour accord" in a normal hand: one or two lines.

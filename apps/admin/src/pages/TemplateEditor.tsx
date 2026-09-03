@@ -369,7 +369,7 @@ export const TemplateEditorPage = () => {
                 <p className="mt-1.5 text-xs text-ink-400">
                   {drawing ? (
                     drawing === 'stamp'
-                      ? 'Cliquez à l’endroit du tampon : la zone se pose à la taille standard (45 mm), déplaçable mais pas redimensionnable.'
+                      ? 'Cliquez à l’endroit du tampon : la zone se pose à la taille standard, déplaçable mais pas redimensionnable.'
                       : drawing === 'signature' &&
                     drawingSheet &&
                     zones.some((z) => z.type === 'signature' && z.sheetField === drawingSheet)
