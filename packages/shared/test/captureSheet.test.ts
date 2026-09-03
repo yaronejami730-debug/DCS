@@ -123,13 +123,19 @@ describe('sheetFieldsForDocument', () => {
     expect(picked.signature?.id).toBe('signature_2');
     expect(picked.invoice_date?.id).toBe('invoice_date');
     expect(picked.stamp?.id).toBe('stamp');
-    // …and not to a document outside the AH group.
+    // …and onto the attestation de fin de travaux, but not onto a devis.
     const fin = sheetFieldsForDocument(
       fields,
-      { filename: 'x.pdf', templateName: "Attestation de fin d'installation", sheetField: 'signature_3' },
+      { filename: 'AFT_DE794260901-2.pdf', templateName: 'Attestation de fin de travaux', sheetField: 'signature_3' },
       ['signature', 'invoice_date'],
     );
-    expect(fin.invoice_date).toBeUndefined();
+    expect(fin.invoice_date?.id).toBe('invoice_date');
+    const devis = sheetFieldsForDocument(
+      fields,
+      { filename: 'devis.pdf', templateName: 'Devis', sheetField: 'signature_1' },
+      ['signature', 'invoice_date'],
+    );
+    expect(devis.invoice_date).toBeUndefined();
   });
 
   it('offers no signature to a document no group names', () => {

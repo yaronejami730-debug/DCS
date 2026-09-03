@@ -180,8 +180,9 @@ export const ATTESTATION_SHEET_V1: CaptureSheetLayout = {
       shortLabel: 'Date de facture',
       hint: 'Écrivez à la main la date de facture',
       type: 'invoice_date',
-      // The invoice date belongs to the AH (attestation sur l'honneur) alone.
-      targets: ['ah', 'honneur'],
+      // The invoice date goes onto the AH (attestation sur l'honneur) and the
+      // attestation de fin de travaux (AFT) — the two documents that quote it.
+      targets: ['ah', 'honneur', 'fin', 'aft', 'travaux'],
       rect: {
         x: MARGIN + NAME_W + ROW3_GAP + DATE_W + ROW3_GAP,
         y: ROW3_TOP,
