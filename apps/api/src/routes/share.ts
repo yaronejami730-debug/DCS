@@ -23,6 +23,7 @@ import { requireAuth, type AppBindings } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { publish } from '../lib/realtime.js';
 import { requiredMarksForFolder } from '../services/templates.js';
+import { loadOwnerCaptureSheetLayout } from '../services/sheetFields.js';
 import {
   importPdfsIntoFolder,
   readPdfUploads,
@@ -306,6 +307,11 @@ publicShareRoutes.get('/:token', async (c) => {
     .maybeSingle<{ display_name: string | null }>();
 
   const marks = await requiredMarksForFolder(link.folder_id);
+  // The signer's live quality check reads the sheet in-browser (same code
+  // the API detects with, see packages/shared/sheetDetect.ts) — it needs the
+  // owner's own capture-sheet layout, not the built-in default, once an
+  // owner has edited their fields.
+  const sheetLayout = await loadOwnerCaptureSheetLayout(link.owner_id);
 
   // Opening the link is what tells the console the request was received — the
   // signal the old "the phone acknowledged" step used to produce.
@@ -340,6 +346,8 @@ publicShareRoutes.get('/:token', async (c) => {
     sender: profile?.display_name ?? null,
     /** Which marks the paperwork calls for, in capture order. */
     marks: marksToCapture(marks),
+    /** The owner's capture-sheet layout, for the live quality check. */
+    sheetLayout,
     /** Terminal states let the page say "déjà fait" instead of restarting. */
     done: folder.status === 'completed',
     scope: link.scope,

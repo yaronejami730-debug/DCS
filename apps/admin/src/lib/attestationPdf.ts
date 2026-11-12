@@ -6,6 +6,7 @@ import {
   SHEET_PAGE_MARKER,
   sheetFieldMarkerCentres,
   sheetPageMarkerCentres,
+  type CaptureSheetLayout,
   type SheetField,
 } from '@scansign/shared';
 
@@ -195,12 +196,13 @@ const drawField = (page: PDFPage, field: SheetField, font: PDFFont, bold: PDFFon
 export const generateAttestationPdf = async (
   signer: AttestationSigner,
   options: AttestationOptions = {},
+  /** The owner's own capture-sheet layout — defaults to the built-in one. */
+  layout: CaptureSheetLayout = ATTESTATION_SHEET_V1,
 ): Promise<Uint8Array> => {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const contentW = A4.w - MARGIN * 2;
-  const layout = ATTESTATION_SHEET_V1;
 
   // ---------------- Page 1 : identité et portée ----------------
   {
@@ -275,11 +277,12 @@ export const generateAttestationPdf = async (
     y -= habH + 18;
 
     // Ce que couvre chaque signature
+    const groups = layout.fields.filter((f) => f.type === 'signature');
     page.drawText(safe('Documents couverts'), { x: MARGIN, y, size: 12, font: bold, color: GREEN });
     y -= 18;
     y = drawParagraph(
       page,
-      "La page suivante comporte trois cases de signature. Chacune vaut accord pour le groupe de documents indiqué au-dessus d'elle, et pour lui seul :",
+      `La page suivante comporte ${groups.length === 1 ? 'une case de signature' : `${groups.length} cases de signature`}. Chacune vaut accord pour le groupe de documents indiqué au-dessus d'elle, et pour lui seul :`,
       MARGIN,
       y,
       font,
@@ -289,7 +292,6 @@ export const generateAttestationPdf = async (
       1.4,
     );
     y -= 4;
-    const groups = layout.fields.filter((f) => f.type === 'signature');
     for (const [i, group] of groups.entries()) {
       page.drawText(safe(`${i + 1}.`), { x: MARGIN + 6, y, size: 11, font: bold, color: GREEN });
       page.drawText(safe(group.label), {

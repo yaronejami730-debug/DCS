@@ -15,6 +15,7 @@ import { dashboardRoutes } from './routes/dashboard.js';
 import { clientRoutes } from './routes/clients.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { uploadRoutes } from './routes/uploads.js';
+import { sheetFieldRoutes } from './routes/sheetFields.js';
 import { publicShareRoutes, shareRoutes, shareUploadRoutes } from './routes/share.js';
 import { createExtractionProvider } from './services/extraction/index.js';
 
@@ -52,6 +53,7 @@ export const createApp = () => {
   app.route('/link', shareUploadRoutes);
   app.route('/documents', documentRoutes);
   app.route('/templates', templateRoutes);
+  app.route('/sheet-fields', sheetFieldRoutes);
   app.route('/dashboard', dashboardRoutes);
   app.route('/clients', clientRoutes);
   app.route('/webhooks', webhookRoutes);

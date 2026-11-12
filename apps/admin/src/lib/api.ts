@@ -72,11 +72,32 @@ export const setSessionLostHandler = (fn: (() => void) | null): void => {
   onSessionLost = fn;
 };
 
+/**
+ * `fetch` itself throws (a raw TypeError, "Failed to fetch") when the server
+ * is unreachable — refused connection, DNS failure, a blocked request. That
+ * is not an HTTP error `res.ok` can catch, so every caller wraps its fetch
+ * here rather than risk that exception escaping as something a caller's
+ * `e instanceof ApiRequestError` check silently mistakes for "not an API
+ * error" and reports as a blank "impossible" instead of the real reason.
+ */
+const fetchOrThrow = async (input: string, init?: RequestInit): Promise<Response> => {
+  try {
+    return await fetch(input, init);
+  } catch (e) {
+    throw new ApiRequestError(
+      0,
+      `Connexion au serveur impossible (${API_URL}). Vérifiez que l'API est démarrée et accessible.`,
+      'NETWORK_ERROR',
+      e instanceof Error ? e.message : undefined,
+    );
+  }
+};
+
 /** Refresh once, transparently, when the access token has aged out. */
 const refresh = async (): Promise<AuthSession | null> => {
   const current = loadSession();
   if (!current) return null;
-  const res = await fetch(`${API_URL}/auth/refresh`, {
+  const res = await fetchOrThrow(`${API_URL}/auth/refresh`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ refreshToken: current.refreshToken }),
@@ -102,7 +123,7 @@ export const api = async <T>(path: string, options: RequestOptions = {}): Promis
   const { method = 'GET', json, form, auth = true } = options;
 
   const send = async (token: string | null): Promise<Response> =>
-    fetch(`${API_URL}${path}`, {
+    fetchOrThrow(`${API_URL}${path}`, {
       method,
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -143,7 +164,7 @@ export const api = async <T>(path: string, options: RequestOptions = {}): Promis
  */
 export const downloadFile = async (path: string, fallbackName: string): Promise<void> => {
   const send = async (token: string | null) =>
-    fetch(`${API_URL}${path}`, {
+    fetchOrThrow(`${API_URL}${path}`, {
       headers: token ? { authorization: `Bearer ${token}` } : {},
     });
 

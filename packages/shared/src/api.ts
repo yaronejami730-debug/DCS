@@ -139,6 +139,25 @@ export const saveTemplateSchema = z.object({
 });
 export type SaveTemplateInput = z.infer<typeof saveTemplateSchema>;
 
+// --- sheet fields -----------------------------------------------------------
+
+/** A capture-sheet box the owner defines — see captureSheet.ts (SheetFieldDef). */
+export const saveSheetFieldSchema = z.object({
+  label: z.string().min(1).max(120),
+  shortLabel: z.string().min(1).max(60),
+  hint: z.string().min(1).max(200),
+  type: z.enum(ZONE_TYPE),
+  sizeClass: z.enum(['square', 'narrow', 'wide']),
+  /** Lowercase, accent-free keywords a document's name is matched against. */
+  targets: z.array(z.string().min(1).max(60)).max(20).default([]),
+});
+export type SaveSheetFieldInput = z.infer<typeof saveSheetFieldSchema>;
+
+export const reorderSheetFieldsSchema = z.object({
+  keys: z.array(z.string().min(1).max(80)).min(1).max(50),
+});
+export type ReorderSheetFieldsInput = z.infer<typeof reorderSheetFieldsSchema>;
+
 /** Attach an existing template to a document and re-evaluate its status. */
 export const assignTemplateSchema = z.object({
   templateId: z.string().uuid(),

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ATTESTATION_SHEET_V1,
   ZONE_TYPE,
   ZONE_TYPE_LABEL,
   sheetFieldTargetsDocument,
@@ -16,6 +15,7 @@ import {
   fetchTemplateSource,
   useAssignTemplate,
   useSaveTemplate,
+  useSheetFieldsWithFallback,
   useTemplate,
 } from '../lib/queries';
 import { Page } from '../components/Layout';
@@ -41,6 +41,8 @@ export const TemplateEditorPage = () => {
   const documentId = params.get('documentId');
 
   const { data: template, isLoading: loadingTemplate } = useTemplate(id);
+  const { items: sheetFields } = useSheetFieldsWithFallback();
+  const signatureFields = sheetFields.filter((f) => f.type === 'signature');
   const save = useSaveTemplate();
   const assign = useAssignTemplate();
 
@@ -273,11 +275,11 @@ export const TemplateEditorPage = () => {
              * come first, named as on the sheet. The other zone types still
              * exist — a stamp, a plain date — behind « Autres zones ».
              */
-            const signatureBoxes = ATTESTATION_SHEET_V1.fields.filter((f) => f.type === 'signature');
+            const signatureBoxes = sheetFields.filter((f) => f.type === 'signature');
             const chosenBox =
-              signatureBoxes.find((f) => f.id === sheetField) ??
+              signatureBoxes.find((f) => f.key === sheetField) ??
               signatureBoxes.find((f) => sheetFieldTargetsDocument(f, [name]));
-            const sheetButtons: Array<{ type: ZoneType; label: string }> = ATTESTATION_SHEET_V1.fields
+            const sheetButtons: Array<{ type: ZoneType; label: string }> = sheetFields
               .filter((f) => f.type !== 'signature')
               .map((f) => ({ type: f.type, label: f.shortLabel }));
             const sheetTypes = new Set<ZoneType>(['signature', ...sheetButtons.map((b) => b.type)]);
@@ -302,18 +304,18 @@ export const TemplateEditorPage = () => {
                 <div className="flex flex-wrap items-center gap-2">
                   {signatureBoxes.map((box, i) => {
                     const existing = zones.filter(
-                      (z) => z.type === 'signature' && z.sheetField === box.id,
+                      (z) => z.type === 'signature' && z.sheetField === box.key,
                     ).length;
-                    const active = drawing === 'signature' && drawingSheet === box.id;
+                    const active = drawing === 'signature' && drawingSheet === box.key;
                     // Two buttons per box: the signature itself, then its
                     // variants. The base is placed once; a variant needs the
                     // base to exist, since it is a variant OF it.
                     return (
-                      <span key={box.id} className="inline-flex gap-1">
+                      <span key={box.key} className="inline-flex gap-1">
                         <Button
                           variant={active && existing === 0 ? 'primary' : 'secondary'}
                           disabled={existing > 0}
-                          onClick={() => startSignature(box.id)}
+                          onClick={() => startSignature(box.key)}
                           title={existing > 0 ? `${box.label} — déjà placée` : box.label}
                         >
                           + Signature repère {i + 1}
@@ -321,7 +323,7 @@ export const TemplateEditorPage = () => {
                         <Button
                           variant={active && existing > 0 ? 'primary' : 'secondary'}
                           disabled={existing === 0}
-                          onClick={() => startSignature(box.id)}
+                          onClick={() => startSignature(box.key)}
                           title={
                             existing === 0
                               ? `Placez d’abord « Signature repère ${i + 1} »`
@@ -399,13 +401,13 @@ export const TemplateEditorPage = () => {
                   const expected = signatureBoxes.find((f) => sheetFieldTargetsDocument(f, [name]));
                   const problems: string[] = [];
                   const straySignatures = zones.filter(
-                    (z) => z.type === 'signature' && z.sheetField && expected && z.sheetField !== expected.id,
+                    (z) => z.type === 'signature' && z.sheetField && expected && z.sheetField !== expected.key,
                   );
                   if (expected && straySignatures.length > 0) {
                     const labels = Array.from(
                       new Set(
                         straySignatures.map(
-                          (z) => signatureBoxes.find((f) => f.id === z.sheetField)?.label ?? z.sheetField,
+                          (z) => signatureBoxes.find((f) => f.key === z.sheetField)?.label ?? z.sheetField,
                         ),
                       ),
                     );
@@ -415,7 +417,7 @@ export const TemplateEditorPage = () => {
                       } de signature ${straySignatures.length > 1 ? 'visent' : 'vise'} ${labels.join(' et ')}.`,
                     );
                   }
-                  for (const field of ATTESTATION_SHEET_V1.fields) {
+                  for (const field of sheetFields) {
                     if (field.type === 'signature' || field.targets.length === 0) continue;
                     if (!zones.some((z) => z.type === field.type)) continue;
                     if (name && !sheetFieldTargetsDocument(field, [name])) {
@@ -457,6 +459,7 @@ export const TemplateEditorPage = () => {
                   onChange={updateZone}
                   onSelect={setSelectedKey}
                   selectedKey={selectedKey}
+                  signatureFields={signatureFields}
                 />
               )}
             />
@@ -486,9 +489,7 @@ export const TemplateEditorPage = () => {
               hint="Facultatif. Utilisé seulement si l’empreinte du fichier ne correspond à rien."
             />
             {(() => {
-              const signatureBoxes = ATTESTATION_SHEET_V1.fields.filter(
-                (f) => f.type === 'signature',
-              );
+              const signatureBoxes = sheetFields.filter((f) => f.type === 'signature');
               const guessed = signatureBoxes.find((f) => sheetFieldTargetsDocument(f, [name]));
               return (
                 <div>
@@ -503,7 +504,7 @@ export const TemplateEditorPage = () => {
                         : 'Automatique — d’après le nom du template'}
                     </option>
                     {signatureBoxes.map((f) => (
-                      <option key={f.id} value={f.id}>
+                      <option key={f.key} value={f.key}>
                         {f.label}
                       </option>
                     ))}
@@ -575,7 +576,7 @@ export const TemplateEditorPage = () => {
                         }}
                       >
                         <p className="text-sm font-medium">
-                          {zoneLabel(zone, zones)} · page {zone.page}
+                          {zoneLabel(zone, zones, signatureFields)} · page {zone.page}
                         </p>
                         <p className="text-xs tabular-nums text-ink-400">
                           x {zone.rect.x.toFixed(3)} · y {zone.rect.y.toFixed(3)} ·{' '}

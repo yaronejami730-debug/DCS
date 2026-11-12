@@ -49,6 +49,7 @@ import {
 export const LandingPage = () => {
   const { token } = useParams<{ token: string }>();
   const { data, isLoading, error } = useShareIntro(token);
+  const sheetLayouts = data?.sheetLayout ? [data.sheetLayout] : undefined;
 
   const send = useSendSignedScan();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -77,7 +78,7 @@ export const LandingPage = () => {
   const scanned = async (doc: ScannedDocument) => {
     setScannerOpen(false);
     const file = new File([doc.blob], `page-${pending.length + 1}.jpg`, { type: 'image/jpeg' });
-    const quality = await assessPhoto(file).catch(() => null);
+    const quality = await assessPhoto(file, sheetLayouts).catch(() => null);
     setPending((prev) => [...prev, { file, url: doc.uri, quality, scanned: true }]);
   };
   const openCamera = () => {
@@ -150,7 +151,7 @@ export const LandingPage = () => {
           const named = new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', {
             type: 'image/jpeg',
           });
-          const quality = await assessPhoto(named).catch(() => null);
+          const quality = await assessPhoto(named, sheetLayouts).catch(() => null);
           return { file: named, url: URL.createObjectURL(named), quality, scanned };
         }),
       );

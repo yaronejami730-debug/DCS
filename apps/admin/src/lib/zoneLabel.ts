@@ -1,9 +1,4 @@
-import {
-  ATTESTATION_SHEET_V1,
-  HANDWRITTEN_MARKS,
-  ZONE_TYPE_LABEL,
-  type ZoneType,
-} from '@scansign/shared';
+import { HANDWRITTEN_MARKS, ZONE_TYPE_LABEL, type ZoneType } from '@scansign/shared';
 
 /**
  * What to call a zone, in the sheet's words.
@@ -18,16 +13,20 @@ export interface LabelledZone {
   sheetField?: string | null;
 }
 
-const boxNumber = (fieldId: string): number | null => {
-  const boxes = ATTESTATION_SHEET_V1.fields.filter((f) => f.type === 'signature');
-  const i = boxes.findIndex((f) => f.id === fieldId);
+const boxNumber = (fieldId: string, signatureFields: readonly { key: string }[]): number | null => {
+  const i = signatureFields.findIndex((f) => f.key === fieldId);
   return i === -1 ? null : i + 1;
 };
 
-export const zoneLabel = <Z extends LabelledZone>(zone: Z, zones: readonly Z[]): string => {
+export const zoneLabel = <Z extends LabelledZone>(
+  zone: Z,
+  zones: readonly Z[],
+  /** The sheet's own signature fields, in order — see useSheetFieldsWithFallback. */
+  signatureFields: readonly { key: string }[],
+): string => {
   const before = zones.slice(0, zones.indexOf(zone));
   if (zone.type === 'signature' && zone.sheetField) {
-    const n = boxNumber(zone.sheetField);
+    const n = boxNumber(zone.sheetField, signatureFields);
     const ordinal = before.filter(
       (z) => z.type === 'signature' && z.sheetField === zone.sheetField,
     ).length;

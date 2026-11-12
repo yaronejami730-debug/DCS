@@ -492,6 +492,9 @@ export const detectSheetInGrey = (
   grey: Uint8Array,
   width: number,
   height: number,
+  /** Which layouts to try. Defaults to the built-in one, for callers that
+   *  haven't yet been given the owner's own (DB-backed) layout. */
+  layouts: readonly CaptureSheetLayout[] = CAPTURE_SHEET_LAYOUTS,
 ): SheetDetection | null => {
   const threshold = inkThreshold(grey);
 
@@ -513,7 +516,7 @@ export const detectSheetInGrey = (
   if (!pageQuad) return null;
 
   let best: SheetDetection | null = null;
-  for (const layout of CAPTURE_SHEET_LAYOUTS) {
+  for (const layout of layouts) {
     const fit = fitLayout(layout, pageQuad, squares, width, height);
     const score = (d: SheetDetection) => d.fields.reduce((n, f) => n + f.markersFound, 0);
     if (fit && (!best || score(fit) > score(best))) best = fit;

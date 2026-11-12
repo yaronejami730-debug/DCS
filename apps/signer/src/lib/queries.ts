@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type {
   CaptureMode,
+  CaptureSheetLayout,
   CutoutPreview,
   ExtractionEngine,
   NormalizedRect,
@@ -55,6 +56,8 @@ export interface ShareIntro {
   folder: { name: string; reference: number; documents: IntroDocument[] };
   expiresAt: string | null;
   active: boolean;
+  /** The owner's capture-sheet layout, for the live quality check. */
+  sheetLayout: CaptureSheetLayout;
 }
 
 /**

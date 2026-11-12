@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   ATTESTATION_SHEET_V1,
   SHEET_PAGE,
+  SheetLayoutOverflowError,
+  layoutSheetFields,
   sheetFieldMarkerCentres,
   sheetFieldTargetsDocument,
   sheetFieldsForDocument,
   sheetPageMarkerCentres,
+  type SheetFieldDef,
 } from '../src/index.js';
 
 const byId = (id: string) => ATTESTATION_SHEET_V1.fields.find((f) => f.id === id)!;
@@ -45,6 +48,63 @@ describe('capture sheet layout', () => {
     expect(sigs).toHaveLength(3);
     const all = sigs.flatMap((f) => f.targets);
     expect(new Set(all).size).toBe(all.length);
+  });
+});
+
+describe('layoutSheetFields', () => {
+  const def = (key: string, sizeClass: SheetFieldDef['sizeClass']): SheetFieldDef => ({
+    key,
+    title: key.toUpperCase(),
+    label: key,
+    shortLabel: key,
+    hint: 'hint',
+    type: 'signature',
+    sizeClass,
+    targets: [],
+  });
+
+  it('packs three squares onto one row', () => {
+    const fields = layoutSheetFields([def('a', 'square'), def('b', 'square'), def('c', 'square')]);
+    const row = new Set(fields.map((f) => f.rect.y));
+    expect(row.size).toBe(1);
+    // Left to right, none overlapping.
+    const sorted = fields.slice().sort((a, b) => a.rect.x - b.rect.x);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i]!.rect.x).toBeGreaterThanOrEqual(sorted[i - 1]!.rect.x + sorted[i - 1]!.rect.width);
+    }
+  });
+
+  it('wraps a fourth square onto a new row', () => {
+    const fields = layoutSheetFields([
+      def('a', 'square'),
+      def('b', 'square'),
+      def('c', 'square'),
+      def('d', 'square'),
+    ]);
+    const rows = new Set(fields.map((f) => f.rect.y));
+    expect(rows.size).toBe(2);
+    expect(fields[3]!.rect.y).toBeGreaterThan(fields[0]!.rect.y);
+  });
+
+  it('packs two wide fields side by side', () => {
+    const fields = layoutSheetFields([def('mention', 'wide'), def('stamp', 'wide')]);
+    expect(new Set(fields.map((f) => f.rect.y)).size).toBe(1);
+    expect(fields[1]!.rect.x).toBeGreaterThanOrEqual(fields[0]!.rect.x + fields[0]!.rect.width);
+  });
+
+  it('keeps every rect on the page', () => {
+    const fields = layoutSheetFields(ATTESTATION_SHEET_V1.fields.map((f) => ({ ...f, key: f.id, sizeClass: f.type === 'signature' ? 'square' : f.type === 'mention' || f.type === 'stamp' ? 'wide' : 'narrow' } as SheetFieldDef)));
+    for (const f of fields) {
+      expect(f.rect.x).toBeGreaterThanOrEqual(0);
+      expect(f.rect.y).toBeGreaterThanOrEqual(0);
+      expect(f.rect.x + f.rect.width).toBeLessThanOrEqual(SHEET_PAGE.width);
+      expect(f.rect.y + f.rect.height).toBeLessThanOrEqual(SHEET_PAGE.height);
+    }
+  });
+
+  it('throws SheetLayoutOverflowError when too many fields do not fit one page', () => {
+    const many = Array.from({ length: 20 }, (_, i) => def(`f${i}`, 'narrow'));
+    expect(() => layoutSheetFields(many)).toThrow(SheetLayoutOverflowError);
   });
 });
 

@@ -10,6 +10,7 @@ const NAV = [
   { to: '/clients', label: 'Clients' },
   { to: '/templates', label: 'Templates' },
   { to: '/attestation', label: 'Attestation simplifiée' },
+  { to: '/sheet-fields', label: 'Repères' },
   { to: '/guide', label: 'Guide' },
 ];
 

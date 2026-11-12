@@ -207,6 +207,7 @@ export const CapturePage = () => {
         onCapture={(photo) => void onCapture(photo)}
         onError={setError}
         busy={busy}
+        sheetLayout={intro?.sheetLayout}
         shutterLabel={
           mode === 'per_mark'
             ? `Photographier ${ZONE_TYPE_LABEL[currentMark].toLowerCase()}`

@@ -6,6 +6,7 @@ import {
   useDocument,
   useDocumentPlacement,
   useResetPlacement,
+  useSheetFieldsWithFallback,
   useSignedPdfUrl,
 } from '../lib/queries';
 import { PdfViewer, type RenderedPage } from '../components/PdfViewer';
@@ -31,6 +32,8 @@ export const DocumentPlacementPage = () => {
 
   const { data: doc, isLoading: loadingDoc } = useDocument(id);
   const { data: placement, isLoading: loadingPlacement } = useDocumentPlacement(id);
+  const { items: sheetFields } = useSheetFieldsWithFallback();
+  const signatureFields = sheetFields.filter((f) => f.type === 'signature');
   const { data: pdf } = useSignedPdfUrl(id);
 
   const adjust = useAdjustPlacement();
@@ -186,6 +189,7 @@ export const DocumentPlacementPage = () => {
               // that were signed. Adding a zone here would ask the generator to
               // stamp ink nobody captured for it.
               drawing={null}
+              signatureFields={signatureFields}
               onDrawn={() => undefined}
               onChange={(key: string, rect: NormalizedRect) =>
                 setZones((current) =>

@@ -59,6 +59,7 @@ export const ZoneEditor = ({
   onChange,
   onSelect,
   selectedKey,
+  signatureFields,
 }: {
   width: number;
   height: number;
@@ -70,6 +71,8 @@ export const ZoneEditor = ({
   onChange: (key: string, rect: NormalizedRect) => void;
   onSelect: (key: string | null) => void;
   selectedKey: string | null;
+  /** The sheet's own signature fields, in order — for "Signature repère N" labels. */
+  signatureFields: readonly { key: string }[];
 }) => {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [preview, setPreview] = useState<NormalizedRect | null>(null);
@@ -207,7 +210,7 @@ export const ZoneEditor = ({
             <span
               className={`absolute -top-5 left-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-white ${tone.label}`}
             >
-              {zoneLabel(zone, zones)}
+              {zoneLabel(zone, zones, signatureFields)}
             </span>
             {!isFixedSize(zone.type) && (
               <span

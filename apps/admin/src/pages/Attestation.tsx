@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { ATTESTATION_SHEET_V1, ZONE_TYPE_LABEL } from '@scansign/shared';
-import { useFolder } from '../lib/queries';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { ATTESTATION_SHEET_V1, ZONE_TYPE_LABEL, type CaptureSheetLayout, type SheetField } from '@scansign/shared';
+import { useFolder, useSheetFieldsWithFallback } from '../lib/queries';
 import { Page } from '../components/Layout';
 import { PdfViewer } from '../components/PdfViewer';
 import { Button, Card, Field } from '../components/ui';
@@ -22,6 +22,20 @@ export const AttestationPage = () => {
   const [params] = useSearchParams();
   const folderId = params.get('folder') ?? undefined;
   const { data: folder } = useFolder(folderId);
+  const { items: sheetFieldRows } = useSheetFieldsWithFallback();
+  const layout: CaptureSheetLayout = useMemo(() => {
+    const fields: SheetField[] = sheetFieldRows.map((r) => ({
+      id: r.key,
+      title: r.title,
+      label: r.label,
+      shortLabel: r.shortLabel,
+      hint: r.hint,
+      type: r.type,
+      targets: r.targets,
+      rect: r.rect,
+    }));
+    return { id: 'owner', title: ATTESTATION_SHEET_V1.title, fields };
+  }, [sheetFieldRows]);
 
   const [signer, setSigner] = useState<AttestationSigner>({
     name: '',
@@ -46,7 +60,8 @@ export const AttestationPage = () => {
   const fileName = () =>
     `attestation-${(signer.company || 'accord').replace(/\s+/g, '-').toLowerCase()}.pdf`;
 
-  const build = () => generateAttestationPdf(signer, { concerned: concerned.trim() || undefined });
+  const build = () =>
+    generateAttestationPdf(signer, { concerned: concerned.trim() || undefined }, layout);
 
   const generate = async () => {
     setBusy(true);
@@ -102,7 +117,7 @@ export const AttestationPage = () => {
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signer, concerned]);
+  }, [signer, concerned, layout]);
   useEffect(
     () => () => {
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
@@ -125,8 +140,8 @@ export const AttestationPage = () => {
     return () => ro.disconnect();
   }, []);
 
-  const signatureBoxes = ATTESTATION_SHEET_V1.fields.filter((f) => f.type === 'signature');
-  const otherBoxes = ATTESTATION_SHEET_V1.fields.filter((f) => f.type !== 'signature');
+  const signatureBoxes = layout.fields.filter((f) => f.type === 'signature');
+  const otherBoxes = layout.fields.filter((f) => f.type !== 'signature');
 
   return (
     <Page
@@ -237,7 +252,10 @@ export const AttestationPage = () => {
 
             <p className="mt-4 text-xs text-ink-400">
               Un template dont le nom ne dit pas son groupe peut désigner sa case dans son éditeur
-              (« Case de signature sur la feuille »).
+              (« Case de signature sur la feuille »).{' '}
+              <Link to="/sheet-fields" className="text-brand-600 hover:underline">
+                Créer, renommer ou réassocier les repères →
+              </Link>
             </p>
           </Card>
         </div>

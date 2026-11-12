@@ -37,7 +37,7 @@ import {
 import { createExtractionProvider } from '../services/extraction/index.js';
 import { generateVariants } from '../services/variants.js';
 import { detectInkRegionsSafely } from '../services/detect.js';
-import { detectSheetSafely } from '../services/sheet.js';
+import { detectSheetForOwner } from '../services/sheet.js';
 import { classifyMark, classificationAvailable } from '../services/classify.js';
 import { processSigningSession } from '../services/processing.js';
 import { loadTemplateZones, requiredMarksForFolder } from '../services/templates.js';
@@ -427,7 +427,7 @@ sessionRoutes.post('/signing-sessions/:id/detect-sheet', async (c) => {
   const path = session.photo_path;
   if (!path) throw badRequest('Aucune photo pour cette session.', 'IMAGE_PROCESSING_FAILED');
   const photo = await downloadObject(path);
-  const sheet = await detectSheetSafely(photo);
+  const sheet = await detectSheetForOwner(photo, user.id);
 
   await audit({
     ownerId: user.id,

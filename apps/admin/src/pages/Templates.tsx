@@ -1,10 +1,11 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ATTESTATION_SHEET_V1, sheetFieldTargetsDocument } from '@scansign/shared';
+import { sheetFieldTargetsDocument } from '@scansign/shared';
 import {
   downloadTemplatePdf,
   useCreateTemplateFromPdf,
   useDeleteTemplate,
+  useSheetFieldsWithFallback,
   useTemplates,
 } from '../lib/queries';
 import { ApiRequestError } from '../lib/api';
@@ -49,8 +50,9 @@ export const TemplatesPage = () => {
   const fileInput = useRef<HTMLInputElement>(null);
   const [showExpected, setShowExpected] = useState(true);
 
-  const signatureBoxes = ATTESTATION_SHEET_V1.fields.filter((f) => f.type === 'signature');
-  const boxTitle = (id: string) => signatureBoxes.find((f) => f.id === id)?.label ?? id;
+  const { items: sheetFieldItems } = useSheetFieldsWithFallback();
+  const signatureBoxes = sheetFieldItems.filter((f) => f.type === 'signature');
+  const boxTitle = (id: string) => signatureBoxes.find((f) => f.key === id)?.label ?? id;
 
   /** Open the creation form with a row of the checklist already filled in. */
   const startExpected = (expected: { name: string; fieldId: string }) => {
@@ -66,7 +68,7 @@ export const TemplatesPage = () => {
    * crop screen applies, so what shows green here routes there.
    */
   const templateFor = (expected: { name: string; fieldId: string }) => {
-    const field = signatureBoxes.find((f) => f.id === expected.fieldId);
+    const field = signatureBoxes.find((f) => f.key === expected.fieldId);
     const items = data?.items ?? [];
     return items.find((t) => {
       const zoneBox = t.zones?.find((z) => z.type === 'signature' && z.sheetField)?.sheetField;
@@ -277,7 +279,7 @@ export const TemplatesPage = () => {
           >
             <option value="">Automatique — d’après le nom</option>
             {signatureBoxes.map((f) => (
-              <option key={f.id} value={f.id}>
+              <option key={f.key} value={f.key}>
                 {f.label}
               </option>
             ))}

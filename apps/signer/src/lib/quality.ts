@@ -5,6 +5,7 @@ import {
   detectSheetInGrey,
   downscaleGrey,
   rgbaToGrey,
+  type CaptureSheetLayout,
   type ExposureReport,
   type QualityLevel,
   type SharpnessReport,
@@ -62,6 +63,7 @@ const assess = (
   sourceWidth: number,
   sourceHeight: number,
   sheetWidth: number,
+  layouts?: readonly CaptureSheetLayout[],
 ): PhotoQuality | null => {
   const big = greyOf(source, sourceWidth, sourceHeight, sheetWidth);
   if (!big) return null;
@@ -70,7 +72,7 @@ const assess = (
   const exposure = assessExposure(small.grey);
   let sheet: SheetDetection | null = null;
   try {
-    sheet = detectSheetInGrey(big.grey, big.width, big.height);
+    sheet = detectSheetInGrey(big.grey, big.width, big.height, layouts);
   } catch {
     sheet = null;
   }
@@ -78,17 +80,23 @@ const assess = (
 };
 
 /** Judge one frame of a live <video>. Cheap enough to call a few times a second. */
-export const assessVideoFrame = (video: HTMLVideoElement): PhotoQuality | null => {
+export const assessVideoFrame = (
+  video: HTMLVideoElement,
+  layouts?: readonly CaptureSheetLayout[],
+): PhotoQuality | null => {
   if (!video.videoWidth || !video.videoHeight) return null;
-  return assess(video, video.videoWidth, video.videoHeight, SHEET_WIDTH_LIVE);
+  return assess(video, video.videoWidth, video.videoHeight, SHEET_WIDTH_LIVE, layouts);
 };
 
 /** Judge a chosen or captured photo, at full detection resolution. */
-export const assessPhoto = async (blob: Blob): Promise<PhotoQuality | null> => {
+export const assessPhoto = async (
+  blob: Blob,
+  layouts?: readonly CaptureSheetLayout[],
+): Promise<PhotoQuality | null> => {
   const bitmap = await createImageBitmap(blob).catch(() => null);
   if (bitmap) {
     try {
-      return assess(bitmap, bitmap.width, bitmap.height, SHEET_WIDTH_STILL);
+      return assess(bitmap, bitmap.width, bitmap.height, SHEET_WIDTH_STILL, layouts);
     } finally {
       bitmap.close();
     }
@@ -101,7 +109,7 @@ export const assessPhoto = async (blob: Blob): Promise<PhotoQuality | null> => {
       element.onerror = () => reject(new Error('image illisible'));
       element.src = url;
     });
-    return assess(image, image.naturalWidth, image.naturalHeight, SHEET_WIDTH_STILL);
+    return assess(image, image.naturalWidth, image.naturalHeight, SHEET_WIDTH_STILL, layouts);
   } catch {
     return null;
   } finally {

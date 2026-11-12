@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { CaptureSheetLayout } from '@scansign/shared';
 import { Button } from './ui';
 import { QualityChips } from './QualityChips';
 import { assessVideoFrame, type PhotoQuality } from '../lib/quality';
@@ -114,6 +115,7 @@ export const CameraCapture = ({
   busy = false,
   shutterLabel = 'Prendre la photo',
   expectSheet = false,
+  sheetLayout,
 }: {
   onCapture: (result: CaptureResult) => void;
   onError: (message: string) => void;
@@ -121,6 +123,8 @@ export const CameraCapture = ({
   shutterLabel?: string;
   /** Show the "feuille reconnue" sensor — when the printed capture sheet is what is being photographed. */
   expectSheet?: boolean;
+  /** The owner's capture-sheet layout, from the share link's intro — defaults to the built-in sheet. */
+  sheetLayout?: CaptureSheetLayout;
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -194,7 +198,7 @@ export const CameraCapture = ({
       const video = videoRef.current;
       if (video && video.readyState >= 2) {
         try {
-          setQuality(assessVideoFrame(video));
+          setQuality(assessVideoFrame(video, sheetLayout ? [sheetLayout] : undefined));
         } catch {
           /* a frame we could not read; try again on the next tick */
         }

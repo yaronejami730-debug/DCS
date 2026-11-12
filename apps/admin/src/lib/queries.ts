@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ATTESTATION_SHEET_V1 } from '@scansign/shared';
 import type {
   CutoutPreview,
   DashboardInsights,
@@ -12,7 +13,10 @@ import type {
   NormalizedRect,
   Paginated,
   RequiredMarks,
+  SaveSheetFieldInput,
   SaveTemplateInput,
+  SheetFieldSizeClass,
+  SheetRect,
   ShareLink,
   ShareLinkReturn,
   ShareScope,
@@ -97,6 +101,93 @@ export const useTemplate = (id: string | undefined) =>
     queryFn: () => api<Template>(`/templates/${id}`),
     enabled: Boolean(id) && id !== 'new',
   });
+
+/** One capture-sheet field ("repère"), as the API returns it — see apps/api/src/routes/sheetFields.ts. */
+export interface SheetFieldRow {
+  key: string;
+  title: string;
+  label: string;
+  shortLabel: string;
+  hint: string;
+  type: ZoneType;
+  sizeClass: SheetFieldSizeClass;
+  targets: string[];
+  rect: SheetRect;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The owner's programmable capture-sheet fields — replaces the old hardcoded ATTESTATION_SHEET_V1. */
+export const useSheetFields = () =>
+  useQuery({
+    queryKey: ['sheetFields'],
+    queryFn: () => api<{ items: SheetFieldRow[] }>('/sheet-fields'),
+  });
+
+/**
+ * The built-in eight fields, shaped like an API response — used only as a
+ * fallback below, for an owner whose `sheet_fields` migration hasn't run yet
+ * (or hasn't seeded rows). Never shown on the /sheet-fields management page
+ * itself: those rows aren't real, editing or deleting one would 404.
+ */
+const FALLBACK_SHEET_FIELDS: SheetFieldRow[] = ATTESTATION_SHEET_V1.fields.map((f, i) => ({
+  key: f.id,
+  title: f.title,
+  label: f.label,
+  shortLabel: f.shortLabel,
+  hint: f.hint,
+  type: f.type,
+  sizeClass: 'square',
+  targets: [...f.targets],
+  rect: f.rect,
+  sortOrder: i,
+  createdAt: '',
+  updatedAt: '',
+}));
+
+/** Read-only consumers (the PDF, the template editor's pickers): never empty. */
+export const useSheetFieldsWithFallback = () => {
+  const query = useSheetFields();
+  const items = query.data?.items?.length ? query.data.items : FALLBACK_SHEET_FIELDS;
+  return { ...query, items };
+};
+
+export const useCreateSheetField = () => {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (input: SaveSheetFieldInput) =>
+      api<{ items: SheetFieldRow[] }>('/sheet-fields', { method: 'POST', json: input }),
+    onSuccess: () => invalidate('sheetFields'),
+  });
+};
+
+export const useUpdateSheetField = () => {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ key, input }: { key: string; input: SaveSheetFieldInput }) =>
+      api<{ items: SheetFieldRow[] }>(`/sheet-fields/${key}`, { method: 'PUT', json: input }),
+    onSuccess: () => invalidate('sheetFields'),
+  });
+};
+
+export const useReorderSheetFields = () => {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (keys: string[]) =>
+      api<{ items: SheetFieldRow[] }>('/sheet-fields/reorder', { method: 'PUT', json: { keys } }),
+    onSuccess: () => invalidate('sheetFields'),
+  });
+};
+
+export const useDeleteSheetField = () => {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (key: string) =>
+      api<{ items: SheetFieldRow[] }>(`/sheet-fields/${key}`, { method: 'DELETE' }),
+    onSuccess: () => invalidate('sheetFields'),
+  });
+};
 
 export const useInvalidate = () => {
   const qc = useQueryClient();
@@ -205,11 +296,21 @@ export const stageUpload = async (file: File): Promise<{ path: string; filename:
     '/uploads/sign',
     { method: 'POST', json: { filename: file.name, size: file.size } },
   );
-  const res = await fetch(signedUrl, {
-    method: 'PUT',
-    headers: { 'content-type': file.type || 'application/pdf', 'x-upsert': 'true' },
-    body: file,
-  });
+  let res: Response;
+  try {
+    res = await fetch(signedUrl, {
+      method: 'PUT',
+      headers: { 'content-type': file.type || 'application/pdf', 'x-upsert': 'true' },
+      body: file,
+    });
+  } catch (e) {
+    throw new ApiRequestError(
+      0,
+      `Connexion au stockage impossible pour ${file.name}.`,
+      'NETWORK_ERROR',
+      e instanceof Error ? e.message : undefined,
+    );
+  }
   if (!res.ok) throw new ApiRequestError(res.status, `Téléversement de ${file.name} refusé (${res.status}).`);
   return { path, filename: file.name };
 };

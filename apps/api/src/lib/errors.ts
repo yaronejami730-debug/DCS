@@ -37,3 +37,5 @@ export const payloadTooLarge = (message: string) =>
 
 export const unsupportedMedia = (message: string) =>
   new HttpError(415, message, 'UNSUPPORTED_MIME');
+
+export const conflict = (message: string, code = 'CONFLICT') => new HttpError(409, message, code);

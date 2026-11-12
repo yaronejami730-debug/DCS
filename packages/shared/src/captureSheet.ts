@@ -196,6 +196,86 @@ export const ATTESTATION_SHEET_V1: CaptureSheetLayout = {
 /** Every layout the detector knows. One today; the id is what will tell them apart. */
 export const CAPTURE_SHEET_LAYOUTS: readonly CaptureSheetLayout[] = [ATTESTATION_SHEET_V1];
 
+/**
+ * How wide a field's box is drawn — everything else about placement (row
+ * flow, vertical position) is computed by `layoutSheetFields`, never chosen
+ * by hand. `square` is a signature/stamp box (as wide as tall); `narrow` a
+ * one-line field (a name, a date); `wide` a multi-line field (a mention),
+ * half the row — two side by side, as the sheet's mention and stamp are.
+ */
+export type SheetFieldSizeClass = 'square' | 'narrow' | 'wide';
+
+/** A field before it has a position — what an owner actually edits. */
+export interface SheetFieldDef {
+  key: string;
+  title: string;
+  label: string;
+  shortLabel: string;
+  hint: string;
+  type: ZoneType;
+  sizeClass: SheetFieldSizeClass;
+  targets: readonly string[];
+}
+
+/** Thrown by `layoutSheetFields` when the fields given don't fit one A4 page. */
+export class SheetLayoutOverflowError extends Error {
+  constructor() {
+    super('Trop de repères pour tenir sur une page.');
+    this.name = 'SheetLayoutOverflowError';
+  }
+}
+
+const LAYOUT_GAP = 34;
+const LAYOUT_ROW_GAP = 80;
+const LAYOUT_NARROW_H = 74;
+const LAYOUT_WIDE_H = 100;
+const LAYOUT_TOP = 150;
+/** Below this, a row would run into the footer — same slack the original hand-tuned layout left. */
+const LAYOUT_MAX_BOTTOM = SHEET_PAGE.height - 150;
+
+/**
+ * Place N fields on the sheet in flow order: left to right, wrapping to a
+ * new row when the next box would not fit, row height set by the tallest box
+ * in it. `wide` is half the row — two side by side, as the original mention
+ * + stamp row was — not the full row, or a single one would waste the row's
+ * other half every time one is added on its own. Deterministic and
+ * order-dependent — reordering fields changes the printed layout, which is
+ * why the API recomputes and persists it on every change rather than
+ * leaving it to be derived on the fly.
+ */
+export const layoutSheetFields = (defs: readonly SheetFieldDef[]): SheetField[] => {
+  const squareW = (CONTENT_W - LAYOUT_GAP * 2) / 3;
+  const wideW = (CONTENT_W - LAYOUT_GAP) / 2;
+  let cursorX = MARGIN;
+  let cursorY = LAYOUT_TOP;
+  let rowH = 0;
+  const out: SheetField[] = [];
+  for (const def of defs) {
+    const width = def.sizeClass === 'wide' ? wideW : squareW;
+    const height =
+      def.sizeClass === 'square' ? width : def.sizeClass === 'narrow' ? LAYOUT_NARROW_H : LAYOUT_WIDE_H;
+    if (cursorX > MARGIN && cursorX + width > MARGIN + CONTENT_W + 0.01) {
+      cursorX = MARGIN;
+      cursorY += rowH + LAYOUT_ROW_GAP;
+      rowH = 0;
+    }
+    out.push({
+      id: def.key,
+      title: def.title,
+      label: def.label,
+      shortLabel: def.shortLabel,
+      hint: def.hint,
+      type: def.type,
+      targets: def.targets,
+      rect: { x: cursorX, y: cursorY, width, height },
+    });
+    cursorX += width + LAYOUT_GAP;
+    rowH = Math.max(rowH, height);
+  }
+  if (cursorY + rowH > LAYOUT_MAX_BOTTOM) throw new SheetLayoutOverflowError();
+  return out;
+};
+
 export interface SheetPoint {
   x: number;
   y: number;
