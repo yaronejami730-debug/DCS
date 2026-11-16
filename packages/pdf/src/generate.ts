@@ -119,7 +119,8 @@ export const generateSignedPdf = async (
   // one mark placed and another silently missing.
   const required: Array<[ZoneType, Uint8Array | null | undefined, ErrorCode, string]> = [
     ['signature', input.signaturePng, 'SIGNATURE_EXTRACTION_FAILED', 'une signature'],
-    ['stamp', input.stampPng, 'STAMP_EXTRACTION_FAILED', 'un tampon'],
+    // The stamp is optional: an empty stamp box means "no stamp", and the
+    // document is signed without it. Its zones are skipped below (no image).
     ['mention', input.mentionPng, 'MENTION_EXTRACTION_FAILED', 'la mention « Lu et approuvé »'],
     ['signature_stamp', input.combinedPng, 'COMBINED_EXTRACTION_FAILED', 'un tampon signé'],
     ['date', input.datePng, 'MARK_EXTRACTION_FAILED', 'une date'],

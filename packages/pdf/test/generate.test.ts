@@ -126,9 +126,9 @@ describe('generateSignedPdf', () => {
     ).rejects.toMatchObject({ code: 'TEMPLATE_ZONE_OUT_OF_RANGE' });
   });
 
-  it('refuses to produce a half-signed document when the stamp cutout is missing', async () => {
+  it('signs without a stamp when the stamp box was left empty (no stamp is an answer)', async () => {
     const original = await makePdf([{ w: A4.w, h: A4.h }]);
-    const promise = generateSignedPdf({
+    const { bytes, placed } = await generateSignedPdf({
       pdfBytes: original,
       zones: [
         { page: 1, type: 'signature', rect: { x: 0.1, y: 0.1, width: 0.1, height: 0.1 } },
@@ -137,8 +137,8 @@ describe('generateSignedPdf', () => {
       signaturePng: fixtureSignaturePng(),
       stampPng: null,
     });
-    await expect(promise).rejects.toBeInstanceOf(PdfPipelineError);
-    await expect(promise).rejects.toMatchObject({ code: 'STAMP_EXTRACTION_FAILED' });
+    expect(placed).toBe(1);
+    expect(looksLikePdf(bytes)).toBe(true);
   });
 
   it('rejects an empty template rather than silently returning the original', async () => {

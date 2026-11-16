@@ -247,7 +247,7 @@ export const adjustDocumentPlacement = async (params: {
 
   // Every zone asked for must have ink to put in it, or the "adjusted"
   // document would come back with a mark quietly missing.
-  const missing = [...new Set(zones.map((z) => z.type))].filter((type) => !cutouts[type]);
+  const missing = [...new Set(zones.map((z) => z.type))].filter((type) => type !== 'stamp' && !cutouts[type]);
   if (missing.length > 0) {
     throw new HttpError(
       409,

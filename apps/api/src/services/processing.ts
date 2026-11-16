@@ -299,16 +299,8 @@ export const processSigningSession = async (
     );
     return;
   }
-  if (needs.stamp && !regions.stamp) {
-    await failSession(
-      sessionId,
-      folderId,
-      ownerId,
-      'STAMP_EXTRACTION_FAILED',
-      'Ce dossier attend un tampon mais aucune zone de tampon n’a été sélectionnée.',
-    );
-    return;
-  }
+  // No stamp is a valid answer — the sheet's stamp box was left empty, so the
+  // document is signed without one. Its stamp zones are simply left blank.
   if (needs.mention && !regions.mention) {
     await failSession(
       sessionId,
