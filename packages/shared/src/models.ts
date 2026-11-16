@@ -75,7 +75,8 @@ export interface ShareLink {
  */
 export interface ShareLinkReturn {
   id: string;
-  linkId: string;
+  /** Null when the operator imported the scan themselves, with no link. */
+  linkId: string | null;
   folderId: string;
   /** Which document this is a signed copy of, when the technician said so. */
   documentId: string | null;

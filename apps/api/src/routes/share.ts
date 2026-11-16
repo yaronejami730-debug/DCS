@@ -19,6 +19,7 @@ import {
 } from '../lib/errors.js';
 import { removeObjects, signedUrl, uploadObject } from '../lib/storage.js';
 import { normalizeCapturePhoto } from '../services/images.js';
+import { takeStagedFile } from './uploads.js';
 import { requireAuth, type AppBindings } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { publish } from '../lib/realtime.js';
@@ -54,7 +55,7 @@ import {
  */
 export interface ReturnRow {
   id: string;
-  link_id: string;
+  link_id: string | null;
   folder_id: string;
   owner_id: string;
   document_id: string | null;
@@ -427,6 +428,93 @@ shareUploadRoutes.post('/documents', async (c) => {
 });
 
 /**
+ * Validate, normalise and file one returned scan.
+ *
+ * Shared by the technician's upload (through a link) and the operator's own
+ * import (a signed PDF received by other means): both end up as the same row,
+ * so « Capturer les signatures » treats them identically.
+ */
+const storeReturn = async (params: {
+  file: File;
+  ownerId: string;
+  folderId: string;
+  linkId: string | null;
+  documentId: string | null;
+  location: { latitude: number; longitude: number; accuracy: number | null } | null;
+}): Promise<ShareLinkReturn> => {
+  const { file, ownerId, folderId, linkId, documentId, location } = params;
+  if (file.size > env.MAX_IMAGE_BYTES && file.type !== 'application/pdf') {
+    throw payloadTooLarge(
+      `${file.name} dépasse ${Math.round(env.MAX_IMAGE_BYTES / 1024 / 1024)} Mo.`,
+    );
+  }
+  if (file.size > env.MAX_PDF_BYTES) {
+    throw payloadTooLarge(
+      `${file.name} dépasse ${Math.round(env.MAX_PDF_BYTES / 1024 / 1024)} Mo.`,
+    );
+  }
+  if (file.type && !ACCEPTED_RETURN.includes(file.type)) {
+    throw unsupportedMedia(`Format non supporté (${file.type}).`);
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const isPdf = file.type === 'application/pdf' || looksLikePdf(bytes);
+
+  /**
+   * Images are normalised the way capture photos are — EXIF orientation baked
+   * in, size capped — because the console will crop against the pixels it is
+   * shown, and a photo whose stored dimensions disagree with its displayed
+   * ones puts every crop 90° out. PDFs are stored as sent; their pages are
+   * rasterised in the console at the moment of cropping.
+   */
+  let stored: Uint8Array = bytes;
+  let contentType = isPdf ? 'application/pdf' : 'image/jpeg';
+  let width: number | null = null;
+  let height: number | null = null;
+  let pageCount: number | null = null;
+
+  if (isPdf) {
+    const info = await inspectPdf(bytes);
+    pageCount = info.pageCount;
+  } else {
+    const normalized = await normalizeCapturePhoto(bytes);
+    stored = normalized.bytes;
+    contentType = normalized.contentType;
+    width = normalized.width;
+    height = normalized.height;
+  }
+
+  const { data: row, error } = await db
+    .from('share_link_returns')
+    .insert({
+      link_id: linkId,
+      folder_id: folderId,
+      owner_id: ownerId,
+      document_id: documentId,
+      filename: file.name || (isPdf ? 'scan.pdf' : 'scan.jpg'),
+      storage_path: 'pending',
+      content_type: contentType,
+      byte_size: stored.byteLength,
+      width,
+      height,
+      page_count: pageCount,
+      latitude: location?.latitude ?? null,
+      longitude: location?.longitude ?? null,
+      location_accuracy: location?.accuracy ?? null,
+      location_at: location ? new Date().toISOString() : null,
+    })
+    .select('*')
+    .single<ReturnRow>();
+  if (error || !row) throw badRequest(error?.message ?? 'Envoi impossible.', 'UPLOAD_FAILED');
+
+  const path = returnPath(ownerId, row.id, isPdf ? 'pdf' : 'jpg');
+  await uploadObject(path, stored, contentType);
+  await db.from('share_link_returns').update({ storage_path: path }).eq('id', row.id);
+
+  return toReturn({ ...row, storage_path: path });
+};
+
+/**
  * The signed page comes back.
  *
  * This is step 3 of the loop: the technician has printed the document, signed
@@ -489,75 +577,16 @@ shareUploadRoutes.post('/returns', async (c) => {
   const saved: ShareLinkReturn[] = [];
 
   for (const file of files) {
-    if (file.size > env.MAX_IMAGE_BYTES && file.type !== 'application/pdf') {
-      throw payloadTooLarge(
-        `${file.name} dépasse ${Math.round(env.MAX_IMAGE_BYTES / 1024 / 1024)} Mo.`,
-      );
-    }
-    if (file.size > env.MAX_PDF_BYTES) {
-      throw payloadTooLarge(
-        `${file.name} dépasse ${Math.round(env.MAX_PDF_BYTES / 1024 / 1024)} Mo.`,
-      );
-    }
-    if (file.type && !ACCEPTED_RETURN.includes(file.type)) {
-      throw unsupportedMedia(`Format non supporté (${file.type}).`);
-    }
-
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const isPdf = file.type === 'application/pdf' || looksLikePdf(bytes);
-
-    /**
-     * Images are normalised the way capture photos are — EXIF orientation baked
-     * in, size capped — because the console will crop against the pixels it is
-     * shown, and a photo whose stored dimensions disagree with its displayed
-     * ones puts every crop 90° out. PDFs are stored as sent; their pages are
-     * rasterised in the console at the moment of cropping.
-     */
-    let stored: Uint8Array = bytes;
-    let contentType = isPdf ? 'application/pdf' : 'image/jpeg';
-    let width: number | null = null;
-    let height: number | null = null;
-    let pageCount: number | null = null;
-
-    if (isPdf) {
-      const info = await inspectPdf(bytes);
-      pageCount = info.pageCount;
-    } else {
-      const normalized = await normalizeCapturePhoto(bytes);
-      stored = normalized.bytes;
-      contentType = normalized.contentType;
-      width = normalized.width;
-      height = normalized.height;
-    }
-
-    const { data: row, error } = await db
-      .from('share_link_returns')
-      .insert({
-        link_id: share.linkId,
-        folder_id: share.folderId,
-        owner_id: user.id,
-        document_id: documentId,
-        filename: file.name || (isPdf ? 'scan.pdf' : 'scan.jpg'),
-        storage_path: 'pending',
-        content_type: contentType,
-        byte_size: stored.byteLength,
-        width,
-        height,
-        page_count: pageCount,
-        latitude: location?.latitude ?? null,
-        longitude: location?.longitude ?? null,
-        location_accuracy: location?.accuracy ?? null,
-        location_at: location ? new Date().toISOString() : null,
-      })
-      .select('*')
-      .single<ReturnRow>();
-    if (error || !row) throw badRequest(error?.message ?? 'Envoi impossible.', 'UPLOAD_FAILED');
-
-    const path = returnPath(user.id, row.id, isPdf ? 'pdf' : 'jpg');
-    await uploadObject(path, stored, contentType);
-    await db.from('share_link_returns').update({ storage_path: path }).eq('id', row.id);
-
-    saved.push(toReturn({ ...row, storage_path: path }));
+    saved.push(
+      await storeReturn({
+        file,
+        ownerId: user.id,
+        folderId: share.folderId,
+        linkId: share.linkId,
+        documentId,
+        location,
+      }),
+    );
   }
 
   await audit({
@@ -580,6 +609,55 @@ shareUploadRoutes.post('/returns', async (c) => {
     { returned: saved.map((r) => ({ id: r.id, filename: r.filename })) },
     201,
   );
+});
+
+/**
+ * A signed scan the operator received by other means — mail, a messaging app,
+ * a scanner — filed exactly as if the technician had sent it through a link.
+ *
+ * Same row, same list, same « Capturer les signatures »: the capture page
+ * cannot tell the two apart, which is the point.
+ */
+shareRoutes.post('/:id/returns', async (c) => {
+  const user = c.get('user');
+  const folder = await ownedFolder(c.req.param('id'), user.id);
+
+  let files: File[];
+  if ((c.req.header('content-type') ?? '').includes('application/json')) {
+    const json = (await c.req.json().catch(() => ({}))) as {
+      staged?: Array<{ path: string; filename: string }>;
+    };
+    const staged = Array.isArray(json.staged) ? json.staged : [];
+    if (staged.length === 0) throw badRequest('Aucun fichier reçu.', 'UPLOAD_FAILED');
+    files = [];
+    for (const s of staged) files.push(await takeStagedFile(user.id, String(s.path), String(s.filename)));
+  } else {
+    files = readPdfUploads(await c.req.parseBody({ all: true }));
+  }
+
+  const saved: ShareLinkReturn[] = [];
+  for (const file of files) {
+    saved.push(
+      await storeReturn({
+        file,
+        ownerId: user.id,
+        folderId: folder.id,
+        linkId: null,
+        documentId: null,
+        location: null,
+      }),
+    );
+  }
+
+  await audit({
+    ownerId: user.id,
+    folderId: folder.id,
+    action: 'return.received',
+    metadata: { linkId: null, count: saved.length, imported: true },
+  });
+  publish(user.id, { type: 'folder.updated', folderId: folder.id, status: 'in_progress' });
+
+  return c.json({ returned: saved.map((r) => ({ id: r.id, filename: r.filename })) }, 201);
 });
 
 /**

@@ -349,6 +349,32 @@ export const useUploadDocuments = () => {
   });
 };
 
+/**
+ * Import signed scans the operator received by other means. They land in
+ * « Documents signés reçus », exactly like a return sent through a link, and
+ * are cropped with « Capturer les signatures » the same way.
+ */
+export const useUploadReturns = () => {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: async ({ folderId, files }: { folderId: string; files: File[] }) => {
+      const big = files.filter((f) => f.size > DIRECT_UPLOAD_ABOVE);
+      const small = files.filter((f) => f.size <= DIRECT_UPLOAD_ABOVE);
+      if (big.length > 0) {
+        const staged = [];
+        for (const file of big) staged.push(await stageUpload(file));
+        await api(`/folders/${folderId}/returns`, { method: 'POST', json: { staged } });
+      }
+      if (small.length > 0) {
+        const form = new FormData();
+        for (const file of small) form.append('files', file);
+        await api(`/folders/${folderId}/returns`, { method: 'POST', form });
+      }
+    },
+    onSuccess: () => invalidate('returns', 'folder', 'folders', 'dashboard'),
+  });
+};
+
 export const useDeleteFolder = () => {
   const invalidate = useInvalidate();
   return useMutation({

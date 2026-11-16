@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DocumentRole } from '@scansign/shared';
-import { useUploadDocuments } from '../lib/queries';
+import { useUploadDocuments, useUploadReturns } from '../lib/queries';
 import { ApiRequestError } from '../lib/api';
 import { Button, Modal } from './ui';
 import { peekAttestationTemplate, takeAttestationTemplate } from '../lib/attestationTemplate';
@@ -22,6 +22,9 @@ import { peekAttestationTemplate, takeAttestationTemplate } from '../lib/attesta
  * pre-selected radio is a decision made by the software on the operator's
  * behalf in exactly the place they should be making it themselves.
  */
+/** A PDF is a contract, a sheet to print, or a scan already signed. */
+type ImportKind = DocumentRole | 'signed_scan';
+
 export const ImportDialog = ({
   folderId,
   open,
@@ -32,9 +35,10 @@ export const ImportDialog = ({
   onClose: () => void;
 }) => {
   const upload = useUploadDocuments();
+  const uploadReturns = useUploadReturns();
   const fileInput = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
-  const [role, setRole] = useState<DocumentRole | null>(null);
+  const [role, setRole] = useState<ImportKind | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [templateName, setTemplateName] = useState<string | null>(null);
@@ -59,18 +63,17 @@ export const ImportDialog = ({
   const submit = () => {
     if (files.length === 0 || !role) return;
     setError(null);
-    upload.mutate(
-      { folderId, files, role },
-      {
-        onSuccess: onClose,
-        onError: (e) =>
-          setError(e instanceof ApiRequestError ? e.message : 'Import impossible.'),
-      },
-    );
+    const handlers = {
+      onSuccess: onClose,
+      onError: (e: unknown) =>
+        setError(e instanceof ApiRequestError ? e.message : 'Import impossible.'),
+    };
+    if (role === 'signed_scan') uploadReturns.mutate({ folderId, files }, handlers);
+    else upload.mutate({ folderId, files, role }, handlers);
   };
 
   const choice = (
-    value: DocumentRole,
+    value: ImportKind,
     title: string,
     description: string,
     detail: string,
@@ -164,6 +167,13 @@ export const ImportDialog = ({
               'Le contrat. Il rejoint les documents du dossier, vous y placez les zones, et la signature reçue viendra s’y apposer.',
               'Va dans « Documents à faire signer »',
             )}
+
+            {choice(
+              'signed_scan',
+              'Un document signé reçu',
+              'La feuille déjà remplie et signée (scan ou photo en PDF). Même résultat que si le technicien l’avait renvoyée par le lien : vous capturez les signatures dessus.',
+              'Va dans « Documents signés reçus »',
+            )}
           </div>
         )}
 
@@ -174,7 +184,7 @@ export const ImportDialog = ({
             Annuler
           </Button>
           <Button
-            loading={upload.isPending}
+            loading={upload.isPending || uploadReturns.isPending}
             disabled={files.length === 0 || !role}
             onClick={submit}
           >

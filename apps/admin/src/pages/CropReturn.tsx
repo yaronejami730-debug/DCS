@@ -596,6 +596,31 @@ export const CropReturnPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet, sessionId, targetDoc, zonesLoading, zoneTypesInDoc.join(',')]);
 
+  /**
+   * « Ajuster à la main »: the boxes are the ones the sheet already gave, so
+   * picking one takes it as it was detected — the operator only widens or
+   * nudges it. The box being left is kept as it stands, not thrown away.
+   */
+  const pickDetected = (fieldId: string) => {
+    const field = sheet?.fields.find((f) => f.id === fieldId);
+    if (!field || !markChoices.includes(field.type)) return;
+    if (current) setRegions((prev) => ({ ...prev, [mark]: current }));
+    // The very box that was clicked: a type can have several (three signature
+    // groups), and a validated one for the type is not necessarily this one.
+    const rect = field.rect;
+    classifiedFor.current = [rect.x, rect.y, rect.width, rect.height]
+      .map((n) => n.toFixed(3))
+      .join(',');
+    setMark(field.type);
+    setCurrent(rect);
+    setSuggested(null);
+    setResetToken((n) => n + 1);
+  };
+
+  /** The type's own detected box when nothing is validated for it yet. */
+  const boxFor = (type: ZoneType): NormalizedRect | null =>
+    regions[type] ?? sheet?.fields.find((f) => f.type === type)?.rect ?? null;
+
   const assign = () => {
     if (!current) return;
     setRegions((prev) => ({ ...prev, [mark]: current }));
@@ -737,7 +762,9 @@ export const CropReturnPage = () => {
         const field = picked[type];
         if (!field) unrouted.push(type);
         else if (field.filled) provided.push({ type, field });
-        else empty.push({ type, field });
+        // An empty stamp box is an answer, not a gap: no stamp, and the
+        // document is signed without one. It must never hold the others back.
+        else if (type !== 'stamp') empty.push({ type, field });
       }
       const status =
         provided.length === 0 ? 'blocked' : empty.length + unrouted.length > 0 ? 'partial' : 'ready';
@@ -961,6 +988,7 @@ export const CropReturnPage = () => {
                 onChange={handleChange}
                 tint={TINT[mark]}
                 ghostsOnly={Boolean(sheet) && !manual}
+                onGhostPick={manual ? pickDetected : undefined}
                 ghosts={(sheet?.fields ?? [])
                   // Every detected box, in its type's colour; the active mark's
                   // own box is drawn by the selector itself.
@@ -1153,7 +1181,7 @@ export const CropReturnPage = () => {
                   value={mark}
                   onChange={(e) => {
                     setMark(e.target.value as ZoneType);
-                    setCurrent(regions[e.target.value as ZoneType] ?? null);
+                    setCurrent(boxFor(e.target.value as ZoneType));
                     setResetToken((n) => n + 1);
                   }}
                 >
