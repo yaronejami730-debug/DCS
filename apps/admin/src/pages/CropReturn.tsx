@@ -30,6 +30,7 @@ import { api, ApiRequestError } from '../lib/api';
 import { detectSheetOnImage, openScanPage } from '../lib/sheetPage';
 import { Page } from '../components/Layout';
 import { RegionSelector } from '../components/RegionSelector';
+import { SheetBoxEditor } from '../components/SheetBoxEditor';
 import { CutoutPreview } from '../components/CutoutPreview';
 import { Button, Card, Select, Spinner } from '../components/ui';
 
@@ -184,7 +185,28 @@ export const CropReturnPage = () => {
    * Detected once per page and kept across the sessions opened on it: the
    * photo does not change between documents, so neither do the boxes.
    */
-  const [sheet, setSheet] = useState<SheetDetection | null>(null);
+  const [rawSheet, setSheet] = useState<SheetDetection | null>(null);
+  /**
+   * Boxes the operator nudged in « Ajuster à la main », by field id. Layered
+   * over the detection rather than written into it, so every consumer — the
+   * plan, the apposition, the previews — reads the adjusted geometry without
+   * knowing there was an adjustment.
+   */
+  const [adjusted, setAdjusted] = useState<Record<string, NormalizedRect>>({});
+  const sheet = useMemo<SheetDetection | null>(
+    () =>
+      rawSheet
+        ? {
+            ...rawSheet,
+            fields: rawSheet.fields.map((f) =>
+              adjusted[f.id] ? { ...f, rect: adjusted[f.id]! } : f,
+            ),
+          }
+        : null,
+    [rawSheet, adjusted],
+  );
+  // A fresh detection (another page, another photo) starts from its own boxes.
+  useEffect(() => setAdjusted({}), [rawSheet]);
   const [sheetChecked, setSheetChecked] = useState(false);
   const sheetFor = useRef<string>('');
   /** Which (document, session) pair the boxes were already dropped onto. */
@@ -596,31 +618,6 @@ export const CropReturnPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet, sessionId, targetDoc, zonesLoading, zoneTypesInDoc.join(',')]);
 
-  /**
-   * « Ajuster à la main »: the boxes are the ones the sheet already gave, so
-   * picking one takes it as it was detected — the operator only widens or
-   * nudges it. The box being left is kept as it stands, not thrown away.
-   */
-  const pickDetected = (fieldId: string) => {
-    const field = sheet?.fields.find((f) => f.id === fieldId);
-    if (!field || !markChoices.includes(field.type)) return;
-    if (current) setRegions((prev) => ({ ...prev, [mark]: current }));
-    // The very box that was clicked: a type can have several (three signature
-    // groups), and a validated one for the type is not necessarily this one.
-    const rect = field.rect;
-    classifiedFor.current = [rect.x, rect.y, rect.width, rect.height]
-      .map((n) => n.toFixed(3))
-      .join(',');
-    setMark(field.type);
-    setCurrent(rect);
-    setSuggested(null);
-    setResetToken((n) => n + 1);
-  };
-
-  /** The type's own detected box when nothing is validated for it yet. */
-  const boxFor = (type: ZoneType): NormalizedRect | null =>
-    regions[type] ?? sheet?.fields.find((f) => f.type === type)?.rect ?? null;
-
   const assign = () => {
     if (!current) return;
     setRegions((prev) => ({ ...prev, [mark]: current }));
@@ -978,7 +975,7 @@ export const CropReturnPage = () => {
                       onClick={() => setManual((v) => !v)}
                       className="ml-auto text-xs font-medium text-emerald-800 underline"
                     >
-                      {manual ? 'Revenir au plan automatique' : 'Ajuster à la main'}
+                      {manual ? 'Terminer les ajustements' : 'Ajuster à la main'}
                     </button>
                   </div>
                 </div>
@@ -993,6 +990,21 @@ export const CropReturnPage = () => {
                 <p className="mb-2 text-xs text-ink-400">Recherche des repères de la feuille…</p>
               )}
 
+              {sheet && manual ? (
+                <SheetBoxEditor
+                  photoUrl={photo.url}
+                  photoWidth={photo.width}
+                  photoHeight={photo.height}
+                  boxes={sheet.fields.map((f) => ({
+                    id: f.id,
+                    rect: f.rect,
+                    tint: TINT[f.type],
+                    label: f.filled ? ZONE_TYPE_LABEL[f.type] : `${ZONE_TYPE_LABEL[f.type]} · vide`,
+                    muted: !f.filled,
+                  }))}
+                  onChange={(id, rect) => setAdjusted((prev) => ({ ...prev, [id]: rect }))}
+                />
+              ) : (
               <RegionSelector
                 key={`${mark}-${resetToken}-${page}`}
                 photoUrl={photo.url}
@@ -1002,7 +1014,6 @@ export const CropReturnPage = () => {
                 onChange={handleChange}
                 tint={TINT[mark]}
                 ghostsOnly={Boolean(sheet) && !manual}
-                onGhostPick={manual ? pickDetected : undefined}
                 ghosts={(sheet?.fields ?? [])
                   // Every detected box, in its type's colour; the active mark's
                   // own box is drawn by the selector itself.
@@ -1015,12 +1026,13 @@ export const CropReturnPage = () => {
                     muted: !f.filled,
                   }))}
               />
+              )}
             </>
           )}
         </Card>
 
         <div className="flex flex-col gap-4">
-          {sheet && !manual ? (
+          {sheet ? (
             <Card className="p-4">
               <p className="text-xs font-bold uppercase tracking-wide text-ink-400">
                 Plan d’apposition
@@ -1195,7 +1207,7 @@ export const CropReturnPage = () => {
                   value={mark}
                   onChange={(e) => {
                     setMark(e.target.value as ZoneType);
-                    setCurrent(boxFor(e.target.value as ZoneType));
+                    setCurrent(regions[e.target.value as ZoneType] ?? null);
                     setResetToken((n) => n + 1);
                   }}
                 >
@@ -1277,7 +1289,7 @@ export const CropReturnPage = () => {
           </>
           )}
 
-          {sheet && !manual && sheet.fields.some((f) => f.filled && HANDWRITTEN_MARKS.includes(f.type)) && (
+          {sheet && sheet.fields.some((f) => f.filled && HANDWRITTEN_MARKS.includes(f.type)) && (
             <Card className="p-4">
               <p className="text-xs font-bold uppercase tracking-wide text-ink-400">
                 Variantes générées
