@@ -53,12 +53,6 @@ export interface RegionSelectorProps {
    * once. Outlines only; the active box is the one being edited.
    */
   ghosts?: Array<{ id: string; rect: NormalizedRect; tint: string; label: string; muted?: boolean }>;
-  /**
-   * Called with a ghost's id when the pointer lands on it (and not on the
-   * active box): the detected box is picked up for adjusting instead of a new
-   * one being drawn from scratch.
-   */
-  onGhostPick?: (id: string) => void;
   /** Show the photo and the ghosts only: no active box, no dimming, no gestures. */
   ghostsOnly?: boolean;
 }
@@ -77,7 +71,6 @@ export const RegionSelector = ({
   defaultRect = { x: 0.15, y: 0.3, width: 0.7, height: 0.4 },
   ghosts = [],
   ghostsOnly = false,
-  onGhostPick,
 }: RegionSelectorProps) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -239,22 +232,6 @@ export const RegionSelector = ({
     event.preventDefault();
 
     const picked = pick(point, event.pointerType);
-
-    if (picked === 'draw' && onGhostPick) {
-      const hit = ghosts.find(
-        (g) =>
-          point.x >= g.rect.x &&
-          point.x <= g.rect.x + g.rect.width &&
-          point.y >= g.rect.y &&
-          point.y <= g.rect.y + g.rect.height,
-      );
-      if (hit) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-        onGhostPick(hit.id);
-        return;
-      }
-    }
-
     startRef.current = { rect: rectRef.current, mode: picked, x: point.x, y: point.y };
     draggingRef.current = true;
     setDragging(true);

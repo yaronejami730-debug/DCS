@@ -205,8 +205,28 @@ export const CropReturnPage = () => {
         : null,
     [rawSheet, adjusted],
   );
-  // A fresh detection (another page, another photo) starts from its own boxes.
-  useEffect(() => setAdjusted({}), [rawSheet]);
+  // Adjustments belong to THIS scan and page only: saved under its own key and
+  // reloaded with it. Any other scan starts from its own detected boxes.
+  const adjustKey = `scansign:adjust:${returnId}:${page}`;
+  useEffect(() => {
+    let stored: Record<string, NormalizedRect> = {};
+    try {
+      stored = JSON.parse(localStorage.getItem(adjustKey) ?? '{}') as Record<string, NormalizedRect>;
+    } catch {
+      /* unreadable or unavailable: start from the detection */
+    }
+    setAdjusted(stored);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawSheet, adjustKey]);
+  const saveAdjustments = (next: Record<string, NormalizedRect>) => {
+    setAdjusted(next);
+    try {
+      if (Object.keys(next).length === 0) localStorage.removeItem(adjustKey);
+      else localStorage.setItem(adjustKey, JSON.stringify(next));
+    } catch {
+      /* the adjustment still applies for this session */
+    }
+  };
   const [sheetChecked, setSheetChecked] = useState(false);
   const sheetFor = useRef<string>('');
   /** Which (document, session) pair the boxes were already dropped onto. */
@@ -970,6 +990,18 @@ export const CropReturnPage = () => {
                         {f.filled ? '' : ' · vide'}
                       </span>
                     ))}
+                    {Object.keys(adjusted).length > 0 && (
+                      <span className="text-xs font-medium text-emerald-800">
+                        Ajustements enregistrés ✓
+                        <button
+                          type="button"
+                          onClick={() => saveAdjustments({})}
+                          className="ml-1.5 text-ink-500 underline"
+                        >
+                          Réinitialiser
+                        </button>
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => setManual((v) => !v)}
@@ -1002,7 +1034,7 @@ export const CropReturnPage = () => {
                     label: f.filled ? ZONE_TYPE_LABEL[f.type] : `${ZONE_TYPE_LABEL[f.type]} · vide`,
                     muted: !f.filled,
                   }))}
-                  onChange={(id, rect) => setAdjusted((prev) => ({ ...prev, [id]: rect }))}
+                  onChange={(id, rect) => saveAdjustments({ ...adjusted, [id]: rect })}
                 />
               ) : (
               <RegionSelector
