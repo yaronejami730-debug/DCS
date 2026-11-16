@@ -787,59 +787,73 @@ export const CropReturnPage = () => {
     setAutoRunning(true);
     setError(null);
     try {
-      let session = sessionId;
-      let handled = false;
+      const firstSession = sessionId;
+      const jobs = entries.filter((entry) => entry.provided.length > 0);
       for (const entry of entries) {
         if (entry.provided.length === 0) {
           setServed((prev) => [...prev, { id: entry.doc.id, state: 'skipped' }]);
-          continue;
         }
-        if (!session) {
-          const created = await startSession.mutateAsync({ folderId, returnId, page: pageBlob });
-          session = created.session.id;
-        }
-        const rect = (t: ZoneType) => entry.provided.find((p) => p.type === t)?.field.rect ?? null;
-        const submittedSession = session;
-        const docId = entry.doc.id;
-        await submit.mutateAsync({
-          sessionId: submittedSession,
-          regions: {
-            signature: rect('signature'),
-            stamp: rect('stamp'),
-            mention: rect('mention'),
-            signature_stamp: rect('signature_stamp'),
-            date: rect('date'),
-            quote_date: rect('quote_date'),
-            invoice_date: rect('invoice_date'),
-            free_text: rect('free_text'),
-            checkbox: rect('checkbox'),
-            documentIds: [docId],
-          },
-        });
-        session = null;
-        handled = true;
-        setServed((prev) => [...prev, { id: docId, state: 'processing' }]);
-        void (async () => {
-          for (let i = 0; i < 40; i++) {
-            try {
-              const st = await api<SigningSession>(`/signing-sessions/${submittedSession}`);
-              if (st.status === 'completed' || st.status === 'error') {
-                setServed((prev) =>
-                  prev.map((x) =>
-                    x.id === docId
-                      ? { ...x, state: st.status === 'completed' ? 'completed' : 'error' }
-                      : x,
-                  ),
-                );
-                return;
-              }
-            } catch {
-              /* transient; keep polling */
-            }
-            await new Promise((r) => setTimeout(r, 1500));
-          }
-        })();
       }
+
+      /**
+       * All documents at once, not one after the other.
+       *
+       * Each document has its own session and its own extraction, and they do
+       * not depend on each other: run in sequence the wait was the sum of
+       * them all. The session already open serves the first document; the
+       * others open theirs in parallel.
+       */
+      const settled = await Promise.allSettled(
+        jobs.map(async (entry, index) => {
+          let submittedSession = index === 0 ? firstSession : null;
+          if (!submittedSession) {
+            const created = await startSession.mutateAsync({ folderId, returnId, page: pageBlob });
+            submittedSession = created.session.id;
+          }
+          const rect = (t: ZoneType) => entry.provided.find((p) => p.type === t)?.field.rect ?? null;
+          const docId = entry.doc.id;
+          await submit.mutateAsync({
+            sessionId: submittedSession,
+            regions: {
+              signature: rect('signature'),
+              stamp: rect('stamp'),
+              mention: rect('mention'),
+              signature_stamp: rect('signature_stamp'),
+              date: rect('date'),
+              quote_date: rect('quote_date'),
+              invoice_date: rect('invoice_date'),
+              free_text: rect('free_text'),
+              checkbox: rect('checkbox'),
+              documentIds: [docId],
+            },
+          });
+          setServed((prev) => [...prev, { id: docId, state: 'processing' }]);
+          void (async () => {
+            for (let i = 0; i < 60; i++) {
+              try {
+                const st = await api<SigningSession>(`/signing-sessions/${submittedSession}`);
+                if (st.status === 'completed' || st.status === 'error') {
+                  setServed((prev) =>
+                    prev.map((x) =>
+                      x.id === docId
+                        ? { ...x, state: st.status === 'completed' ? 'completed' : 'error' }
+                        : x,
+                    ),
+                  );
+                  return;
+                }
+              } catch {
+                /* transient; keep polling */
+              }
+              await new Promise((r) => setTimeout(r, 700));
+            }
+          })();
+        }),
+      );
+      const handled = settled.some((r) => r.status === 'fulfilled');
+      const failure = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failure) throw failure.reason;
+      const session: string | null = jobs.length > 0 ? null : firstSession;
       if (handled) markHandled.mutate({ folderId, returnId });
       setSessionId(session);
       setRegions({});

@@ -384,20 +384,32 @@ export const processSigningSession = async (
       ['checkbox', regions.checkbox],
     ];
 
-    for (const [mark, region] of wanted) {
-      if (!region) continue;
-      const photo = await photoFor(mark);
-      if (!photo) {
-        throw new HttpError(400, `Photo manquante pour ${mark}.`, FAILURE[mark]);
-      }
-      const crop = await cropNormalizedRegion(photo.bytes, region, photo.width, photo.height);
-      // A combined mark is ink over a stamp; the stamp path handles coloured
-      // ink better, which is what dominates that image.
-      const extracted =
-        mark === 'stamp' || mark === 'signature_stamp'
-          ? await provider.extractStamp({ image: crop, contentType: 'image/png' })
-          : await provider.extractSignature({ image: crop, contentType: 'image/png' });
-      cutouts[mark] = (await trimTransparentBorder(extracted.png, FAILURE[mark])).bytes;
+    // Every mark is cut out at the same time: each one is an independent call
+    // to the extraction engine, and doing them one after the other made the
+    // wait the sum of all of them instead of the slowest one.
+    const results = await Promise.all(
+      wanted.map(async ([mark, region]) => {
+        if (!region) return null;
+        const photo = await photoFor(mark);
+        if (!photo) {
+          throw new HttpError(400, `Photo manquante pour ${mark}.`, FAILURE[mark]);
+        }
+        const crop = await cropNormalizedRegion(photo.bytes, region, photo.width, photo.height);
+        // A combined mark is ink over a stamp; the stamp path handles coloured
+        // ink better, which is what dominates that image.
+        const extracted =
+          mark === 'stamp' || mark === 'signature_stamp'
+            ? await provider.extractStamp({ image: crop, contentType: 'image/png' })
+            : await provider.extractSignature({ image: crop, contentType: 'image/png' });
+        const trimmed = (await trimTransparentBorder(extracted.png, FAILURE[mark])).bytes;
+        return { mark, trimmed, extracted };
+      }),
+    );
+
+    for (const r of results) {
+      if (!r) continue;
+      const { mark, trimmed, extracted } = r;
+      cutouts[mark] = trimmed;
 
       // Which engine actually produced each mark, and what it cost. With a
       // metered API in the pipeline this is the only record of the spend, and
