@@ -712,11 +712,23 @@ export const processSigningSession = async (
   // The folder is only `completed` once every document has a final PDF. With
   // documents still to configure it goes back to `in_progress` — work left to
   // do, but no error, so the folder can be signed again once they are set up.
+  //
+  // "Every document" means the whole folder, not just this run's: a run aimed
+  // at one document (the console signs them one at a time, concurrently) sees
+  // only its own and would call the folder finished — or be overwritten by a
+  // sibling run that started later. The documents' own statuses are the truth.
+  const { data: contractStates } = await db
+    .from('documents')
+    .select('status')
+    .eq('folder_id', folderId)
+    .eq('role', 'to_sign')
+    .returns<Array<{ status: string }>>();
+  const folderDone = allGood && (contractStates ?? []).every((d) => d.status === 'completed');
   await db
     .from('folders')
     .update({
-      status: allGood ? 'completed' : cleanRun ? 'in_progress' : 'error',
-      completed_at: allGood ? now : null,
+      status: folderDone ? 'completed' : cleanRun ? 'in_progress' : 'error',
+      completed_at: folderDone ? now : null,
       error_code: cleanRun ? null : 'PDF_GENERATION_FAILED',
       error_message: allGood ? null : cleanRun ? pending : `${failed} document(s) en échec.`,
     })
@@ -794,7 +806,7 @@ export const processSigningSession = async (
   publish(ownerId, {
     type: 'folder.updated',
     folderId,
-    status: allGood ? 'completed' : cleanRun ? 'in_progress' : 'error',
+    status: folderDone ? 'completed' : cleanRun ? 'in_progress' : 'error',
   });
   publish(ownerId, {
     type: 'session.updated',

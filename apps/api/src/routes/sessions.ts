@@ -217,7 +217,9 @@ const startSession = async (c: SessionContext, folderId: string) => {
     .single<SessionRow>();
   if (error || !session) throw badRequest(error?.message ?? 'Session impossible.', 'UPLOAD_FAILED');
 
-  await db.from('folders').update({ status: 'in_progress' }).eq('id', folderId);
+  // Never demote a finished folder: sessions run side by side, and one opening
+  // after the last document completed would otherwise undo the completion.
+  await db.from('folders').update({ status: 'in_progress' }).eq('id', folderId).neq('status', 'completed');
 
   // Per-mark capture uploads each photo separately, so there is nothing to
   // store yet — the client drives the sequence from here.
