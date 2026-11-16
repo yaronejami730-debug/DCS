@@ -205,28 +205,6 @@ export const CropReturnPage = () => {
         : null,
     [rawSheet, adjusted],
   );
-  // Adjustments belong to THIS scan and page only: saved under its own key and
-  // reloaded with it. Any other scan starts from its own detected boxes.
-  const adjustKey = `scansign:adjust:${returnId}:${page}`;
-  useEffect(() => {
-    let stored: Record<string, NormalizedRect> = {};
-    try {
-      stored = JSON.parse(localStorage.getItem(adjustKey) ?? '{}') as Record<string, NormalizedRect>;
-    } catch {
-      /* unreadable or unavailable: start from the detection */
-    }
-    setAdjusted(stored);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawSheet, adjustKey]);
-  const saveAdjustments = (next: Record<string, NormalizedRect>) => {
-    setAdjusted(next);
-    try {
-      if (Object.keys(next).length === 0) localStorage.removeItem(adjustKey);
-      else localStorage.setItem(adjustKey, JSON.stringify(next));
-    } catch {
-      /* the adjustment still applies for this session */
-    }
-  };
   const [sheetChecked, setSheetChecked] = useState(false);
   const sheetFor = useRef<string>('');
   /** Which (document, session) pair the boxes were already dropped onto. */
@@ -270,6 +248,29 @@ export const CropReturnPage = () => {
   const zoneData = zoneQueries.map((q) => q.data);
 
   const [page, setPage] = useState(Number(params.get('page') ?? 1) || 1);
+
+  // Adjustments belong to THIS scan and page only: saved under its own key and
+  // reloaded with it. Any other scan starts from its own detected boxes.
+  const adjustKey = `scansign:adjust:${returnId}:${page}`;
+  useEffect(() => {
+    let stored: Record<string, NormalizedRect> = {};
+    try {
+      stored = JSON.parse(localStorage.getItem(adjustKey) ?? '{}') as Record<string, NormalizedRect>;
+    } catch {
+      /* unreadable or unavailable: start from the detection */
+    }
+    setAdjusted(stored);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawSheet, adjustKey]);
+  const saveAdjustments = (next: Record<string, NormalizedRect>) => {
+    setAdjusted(next);
+    try {
+      if (Object.keys(next).length === 0) localStorage.removeItem(adjustKey);
+      else localStorage.setItem(adjustKey, JSON.stringify(next));
+    } catch {
+      /* the adjustment still applies for this session */
+    }
+  };
   const [pageBlob, setPageBlob] = useState<Blob | null>(null);
   const [photo, setPhoto] = useState<{ url: string; width: number; height: number } | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
